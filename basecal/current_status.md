@@ -54,7 +54,9 @@ Phase 0(준비) 진행 중. "부대 달력" 제목만 있는 빈 프로젝트를
 
 ## 막힌 점
 
-없음.
+- 새로 만든 파일(`index.html`, `css/style.css`, `js/app.js`)이 원인을 모른 채 사라진 일이 있었다. 다시 만들고 커밋해 두었다. OneDrive 동기화나 보안 프로그램이 원인일 수 있다.
+- 휴대폰은 모바일 데이터를 쓰므로 PC의 `localhost`로는 열 수 없다. 공개 주소(GitHub Pages)가 필요한데, 저장소 주소의 GitHub 계정 `haj0un03`이 존재하지 않아 올릴 수 없다. 올바른 GitHub 아이디가 필요하다.
+- 저장소는 바깥 `basecal/` 폴더로 정했다. 안쪽 폴더의 예전 저장소는 `basecal/.git_inner_backup`에 백업했다.
 
 ## 다음에 할 일
 
