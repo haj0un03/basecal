@@ -2,14 +2,31 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>부대 달력</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <main id="app">
-    <h1>부대 달력</h1>
-  </main>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="app-title">부대 달력</span>
+      <div class="user-area">
+        <button type="button" id="user-button" class="user-button" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu"></button>
+        <div id="user-menu" class="user-menu" hidden></div>
+      </div>
+    </div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <nav class="tabbar" aria-label="주요 메뉴">
+    <div class="tabbar-inner">
+      <a href="#calendar" class="tab" data-tab="calendar">달력</a>
+      <a href="#leave" class="tab" data-tab="leave">휴가</a>
+      <a href="#facility" class="tab" data-tab="facility">시설</a>
+    </div>
+  </nav>
+
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

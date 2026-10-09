@@ -1,4 +1,17 @@
 /* 외부 글꼴을 쓰지 않는다. 기기에 있는 기본 글꼴을 쓴다. */
+/* 색과 모양은 임시 값이다. 디자인 방향(0-3)을 정하면 바꾼다. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #666a73;
+  --border: #dde0e5;
+  --accent: #2f5d50;
+  --topbar-height: 52px;
+  --tabbar-height: 60px;
+  --content-width: 720px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -6,12 +19,148 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
-  background: #ffffff;
-  color: #1a1a1a;
+  background: var(--bg);
+  color: var(--text);
+  /* 한국어 낱말이 중간에서 끊기지 않게 한다 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
-#app {
-  max-width: 480px;
+/* 위쪽: 앱 이름과 현재 사용자 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-inner {
+  max-width: var(--content-width);
+  height: var(--topbar-height);
   margin: 0 auto;
-  padding: 16px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.user-area {
+  position: relative;
+}
+
+.user-button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.user-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 200px;
+  padding: 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.user-menu-info {
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-menu-name {
+  font-weight: 700;
+}
+
+.user-menu-sub {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.user-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.user-menu-item:disabled {
+  color: var(--text-muted);
+}
+
+/* 가운데: 탭별 화면 */
+.view {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 16px 16px calc(var(--tabbar-height) + 24px + env(safe-area-inset-bottom));
+}
+
+.view h1 {
+  margin: 0 0 8px;
+  font-size: 1.3rem;
+}
+
+.placeholder {
+  margin: 0;
+  padding: 24px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* 아래쪽: 탭 3개 */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar-inner {
+  max-width: var(--content-width);
+  height: var(--tabbar-height);
+  margin: 0 auto;
+  display: flex;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  border-top: 3px solid transparent;
+}
+
+.tab[aria-current="page"] {
+  color: var(--accent);
+  border-top-color: var(--accent);
 }
