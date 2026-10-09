@@ -297,3 +297,97 @@ export const mockDb = {
   "reservations": [],
   "audit_logs": []
 };
+
+// 로그인 흉내용 비밀번호 (Phase 0~4 전용)
+// - Supabase 인증 기능을 흉내 낸다. Phase 5에서는 Supabase가 비밀번호를 해시로 따로 관리하므로 이 목록을 지운다.
+// - 가상 계정 전용 연습 비밀번호다. 실제 비밀번호를 넣지 않는다.
+export const mockAuth = [
+  {
+    "user_id": "u01",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u02",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u03",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u04",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u05",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u06",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u07",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u08",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u09",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u10",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u11",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u12",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u13",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u14",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u15",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u16",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u17",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u18",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u19",
+    "password": "test1234"
+  },
+  {
+    "user_id": "u20",
+    "password": "test1234"
+  },
+  {
+    "user_id": "o01",
+    "password": "test1234"
+  },
+  {
+    "user_id": "o02",
+    "password": "test1234"
+  }
+];
