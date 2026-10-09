@@ -120,6 +120,17 @@ body {
   font-size: 1.3rem;
 }
 
+.section + .section {
+  margin-top: 24px;
+}
+
+.section h2 {
+  margin: 0 0 8px;
+  padding-left: 8px;
+  border-left: 4px solid var(--accent);
+  font-size: 1.1rem;
+}
+
 .placeholder {
   margin: 0;
   padding: 24px 16px;

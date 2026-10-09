@@ -1,11 +1,23 @@
 // 앱의 시작점. 위쪽 사용자 영역과 아래쪽 탭 3개의 틀을 그린다.
 import { getCurrentUser } from './data.js';
 
+// 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
 const TABS = {
-  calendar: { title: '달력', note: '월간 달력과 일정은 Phase 2에서 만듭니다.' },
-  leave: { title: '휴가', note: '휴가·외박·외출 신청은 Phase 3에서 만듭니다.' },
-  facility: { title: '시설', note: '시설 예약은 Phase 4에서 만듭니다.' },
+  calendar: {
+    title: '달력',
+    sections: [{ note: '월간 달력과 일정은 Phase 2에서 만듭니다.' }],
+  },
+  apply: {
+    title: '신청',
+    sections: [
+      { heading: '휴가', note: '휴가·외박·외출 신청은 Phase 3에서 만듭니다.' },
+      { heading: '시설', note: '시설 예약은 Phase 4에서 만듭니다.' },
+    ],
+  },
 };
+
+// 예전 탭 주소로 들어와도 신청 탭을 연다.
+const OLD_TABS = { leave: 'apply', facility: 'apply' };
 
 const ROLE_LABELS = { soldier: '병사', officer: '간부' };
 
@@ -14,20 +26,33 @@ const userButton = document.getElementById('user-button');
 const userMenu = document.getElementById('user-menu');
 
 function currentTab() {
-  const tab = location.hash.slice(1);
+  const hash = location.hash.slice(1);
+  const tab = OLD_TABS[hash] ?? hash;
   return TABS[tab] ? tab : 'calendar';
+}
+
+function renderSection({ heading, note }) {
+  const section = document.createElement('section');
+  section.className = 'section';
+  if (heading) {
+    const h2 = document.createElement('h2');
+    h2.textContent = heading;
+    section.append(h2);
+  }
+  const placeholder = document.createElement('p');
+  placeholder.className = 'placeholder';
+  placeholder.textContent = note;
+  section.append(placeholder);
+  return section;
 }
 
 function renderView() {
   const tab = currentTab();
-  const { title, note } = TABS[tab];
+  const { title, sections } = TABS[tab];
 
   const heading = document.createElement('h1');
   heading.textContent = title;
-  const placeholder = document.createElement('p');
-  placeholder.className = 'placeholder';
-  placeholder.textContent = note;
-  view.replaceChildren(heading, placeholder);
+  view.replaceChildren(heading, ...sections.map(renderSection));
 
   document.querySelectorAll('.tab').forEach((link) => {
     if (link.dataset.tab === tab) {
