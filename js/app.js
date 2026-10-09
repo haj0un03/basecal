@@ -2,16 +2,31 @@
 import { getCurrentUser, signIn, signOut } from './data.js';
 
 // 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
+// 각 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
+// - all: 모두에게, soldier: 병사에게만, officer: 간부에게만 (간부 전용 표시와 함께)
 const TABS = {
   calendar: {
     title: '달력',
-    sections: [{ note: '월간 달력과 일정은 Phase 2에서 만듭니다.' }],
+    sections: [
+      {
+        all: '월간 달력, 선택한 날의 일정, 전역 D-day, 개인 일정 추가는 Phase 2에서 만듭니다.',
+        officer: '부대 일정 추가·수정·삭제는 Phase 2에서 만듭니다.',
+      },
+    ],
   },
   apply: {
     title: '신청',
     sections: [
-      { heading: '휴가', note: '휴가·외박·외출 신청은 Phase 3에서 만듭니다.' },
-      { heading: '시설', note: '시설 예약은 Phase 4에서 만듭니다.' },
+      {
+        heading: '휴가',
+        soldier: '휴가 종류별 남은 일수, 날짜별 남은 자리, 휴가·외박·외출 신청, 받은 일수 요청은 Phase 3에서 만듭니다.',
+        officer: '날짜별 출타 인원과 신청자 명단, 출타율 입력, 받은 휴가 일수 승인은 Phase 3에서 만듭니다.',
+      },
+      {
+        heading: '시설',
+        all: '시설 목록, 날짜별 시간대 현황, 예약 신청, 내 예약은 Phase 4에서 만듭니다.',
+        officer: '예약 승인 대기 목록은 Phase 4에서 만듭니다.',
+      },
     ],
   },
 };
@@ -31,28 +46,40 @@ function currentTab() {
   return TABS[tab] ? tab : 'calendar';
 }
 
-function renderSection({ heading, note }) {
+function placeholder(text, officerOnly = false) {
+  const p = document.createElement('p');
+  p.className = officerOnly ? 'placeholder officer-only' : 'placeholder';
+  if (officerOnly) {
+    const badge = document.createElement('span');
+    badge.className = 'officer-badge';
+    badge.textContent = '간부 전용';
+    p.append(badge);
+  }
+  p.append(text);
+  return p;
+}
+
+function renderSection(spec, user) {
   const section = document.createElement('section');
   section.className = 'section';
-  if (heading) {
+  if (spec.heading) {
     const h2 = document.createElement('h2');
-    h2.textContent = heading;
+    h2.textContent = spec.heading;
     section.append(h2);
   }
-  const placeholder = document.createElement('p');
-  placeholder.className = 'placeholder';
-  placeholder.textContent = note;
-  section.append(placeholder);
+  if (spec.all) section.append(placeholder(spec.all));
+  if (spec.soldier && user.role === 'soldier') section.append(placeholder(spec.soldier));
+  if (spec.officer && user.role === 'officer') section.append(placeholder(spec.officer, true));
   return section;
 }
 
-function renderView() {
+function renderView(user) {
   const tab = currentTab();
   const { title, sections } = TABS[tab];
 
   const heading = document.createElement('h1');
   heading.textContent = title;
-  view.replaceChildren(heading, ...sections.map(renderSection));
+  view.replaceChildren(heading, ...sections.map((spec) => renderSection(spec, user)));
 
   document.querySelectorAll('.tab').forEach((link) => {
     if (link.dataset.tab === tab) {
@@ -140,12 +167,19 @@ function renderUser(user) {
   sub.textContent = `${user.company} · ${ROLE_LABELS[user.role]}`;
   info.append(name, sub);
 
-  // 비밀번호 변경은 아직 만들지 않았다.
-  const changePassword = document.createElement('button');
-  changePassword.type = 'button';
-  changePassword.className = 'user-menu-item';
-  changePassword.textContent = '비밀번호 변경 (준비 중)';
-  changePassword.disabled = true;
+  // 비밀번호 변경과 보안코드 발급(1-4)은 아직 만들지 않았다.
+  const pending = (label) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'user-menu-item';
+    item.textContent = `${label} (준비 중)`;
+    item.disabled = true;
+    return item;
+  };
+  const items = [pending('비밀번호 변경')];
+  if (user.role === 'officer') {
+    items.unshift(pending('일회용 보안코드 발급'));
+  }
 
   const logout = document.createElement('button');
   logout.type = 'button';
@@ -157,7 +191,7 @@ function renderUser(user) {
     render();
   });
 
-  userMenu.replaceChildren(info, changePassword, logout);
+  userMenu.replaceChildren(info, ...items, logout);
 }
 
 function render() {
@@ -169,7 +203,7 @@ function render() {
     return;
   }
   renderUser(user);
-  renderView();
+  renderView(user);
 }
 
 function setMenuOpen(open) {

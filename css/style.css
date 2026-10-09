@@ -69,7 +69,7 @@ body {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  min-width: 200px;
+  min-width: 240px;
   padding: 8px 0;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -102,6 +102,7 @@ body {
   color: var(--text);
   font: inherit;
   text-align: left;
+  white-space: nowrap;
 }
 
 .user-menu-item:disabled {
@@ -139,6 +140,26 @@ body {
   background: var(--surface);
   color: var(--text-muted);
   text-align: center;
+}
+
+.placeholder + .placeholder {
+  margin-top: 8px;
+}
+
+/* 간부에게만 보이는 영역 */
+.placeholder.officer-only {
+  border-color: var(--accent);
+}
+
+.officer-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 /* 로그인 화면 */
