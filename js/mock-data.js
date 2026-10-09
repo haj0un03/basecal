@@ -6,6 +6,7 @@
 //
 // 값의 뜻
 // - profiles.role: soldier(병사), officer(간부)
+// - profiles.position: 보직. 간부가 직접 입력한다 (20자 이하)
 // - events.type: personal(개인), duty(근무), unit(부대), leave(휴가), overnight(외박), outing(외출)
 // - events.unit_category: training(훈련), inspection(점검), event(행사), other(기타)
 //   훈련은 제목과 설명 없이 "훈련"으로만 표시하므로 title을 비워 둔다.
@@ -17,7 +18,7 @@ export const mockDb = {
       "id": "u01",
       "name": "김하늘",
       "role": "soldier",
-      "company": "1중대",
+      "position": "소총수",
       "enlist_date": "2025-05-04",
       "discharge_date": "2026-11-03",
       "is_active": true
@@ -26,7 +27,7 @@ export const mockDb = {
       "id": "u02",
       "name": "이바다",
       "role": "soldier",
-      "company": "2중대",
+      "position": "운전병",
       "enlist_date": "2025-05-29",
       "discharge_date": "2026-11-28",
       "is_active": true
@@ -35,7 +36,7 @@ export const mockDb = {
       "id": "u03",
       "name": "박가온",
       "role": "soldier",
-      "company": "3중대",
+      "position": "취사병",
       "enlist_date": "2025-06-23",
       "discharge_date": "2026-12-22",
       "is_active": true
@@ -44,7 +45,7 @@ export const mockDb = {
       "id": "u04",
       "name": "최나래",
       "role": "soldier",
-      "company": "1중대",
+      "position": "통신병",
       "enlist_date": "2025-07-18",
       "discharge_date": "2027-01-17",
       "is_active": true
@@ -53,7 +54,7 @@ export const mockDb = {
       "id": "u05",
       "name": "정다온",
       "role": "soldier",
-      "company": "2중대",
+      "position": "의무병",
       "enlist_date": "2025-08-12",
       "discharge_date": "2027-02-11",
       "is_active": true
@@ -62,7 +63,7 @@ export const mockDb = {
       "id": "u06",
       "name": "강보람",
       "role": "soldier",
-      "company": "3중대",
+      "position": "행정병",
       "enlist_date": "2025-09-06",
       "discharge_date": "2027-03-05",
       "is_active": true
@@ -71,7 +72,7 @@ export const mockDb = {
       "id": "u07",
       "name": "조새벽",
       "role": "soldier",
-      "company": "1중대",
+      "position": "정비병",
       "enlist_date": "2025-10-01",
       "discharge_date": "2027-03-31",
       "is_active": true
@@ -80,7 +81,7 @@ export const mockDb = {
       "id": "u08",
       "name": "윤겨울",
       "role": "soldier",
-      "company": "2중대",
+      "position": "소총수",
       "enlist_date": "2025-10-26",
       "discharge_date": "2027-04-25",
       "is_active": true
@@ -89,7 +90,7 @@ export const mockDb = {
       "id": "u09",
       "name": "장한결",
       "role": "soldier",
-      "company": "3중대",
+      "position": "소총수",
       "enlist_date": "2025-11-20",
       "discharge_date": "2027-05-19",
       "is_active": true
@@ -98,7 +99,7 @@ export const mockDb = {
       "id": "u10",
       "name": "임도담",
       "role": "soldier",
-      "company": "1중대",
+      "position": "경계병",
       "enlist_date": "2025-12-15",
       "discharge_date": "2027-06-14",
       "is_active": true
@@ -107,7 +108,7 @@ export const mockDb = {
       "id": "u11",
       "name": "한마루",
       "role": "soldier",
-      "company": "2중대",
+      "position": "소총수",
       "enlist_date": "2026-01-09",
       "discharge_date": "2027-07-08",
       "is_active": true
@@ -116,7 +117,7 @@ export const mockDb = {
       "id": "u12",
       "name": "오여름",
       "role": "soldier",
-      "company": "3중대",
+      "position": "운전병",
       "enlist_date": "2026-02-03",
       "discharge_date": "2027-08-02",
       "is_active": true
@@ -125,7 +126,7 @@ export const mockDb = {
       "id": "u13",
       "name": "서누리",
       "role": "soldier",
-      "company": "1중대",
+      "position": "취사병",
       "enlist_date": "2026-02-28",
       "discharge_date": "2027-08-27",
       "is_active": true
@@ -134,7 +135,7 @@ export const mockDb = {
       "id": "u14",
       "name": "신다솜",
       "role": "soldier",
-      "company": "2중대",
+      "position": "통신병",
       "enlist_date": "2026-03-25",
       "discharge_date": "2027-09-24",
       "is_active": true
@@ -143,7 +144,7 @@ export const mockDb = {
       "id": "u15",
       "name": "권별하",
       "role": "soldier",
-      "company": "3중대",
+      "position": "의무병",
       "enlist_date": "2026-04-19",
       "discharge_date": "2027-10-18",
       "is_active": true
@@ -152,7 +153,7 @@ export const mockDb = {
       "id": "u16",
       "name": "황이랑",
       "role": "soldier",
-      "company": "1중대",
+      "position": "행정병",
       "enlist_date": "2026-05-14",
       "discharge_date": "2027-11-13",
       "is_active": true
@@ -161,7 +162,7 @@ export const mockDb = {
       "id": "u17",
       "name": "안소울",
       "role": "soldier",
-      "company": "2중대",
+      "position": "정비병",
       "enlist_date": "2026-06-08",
       "discharge_date": "2027-12-07",
       "is_active": true
@@ -170,7 +171,7 @@ export const mockDb = {
       "id": "u18",
       "name": "송하람",
       "role": "soldier",
-      "company": "3중대",
+      "position": "소총수",
       "enlist_date": "2026-07-03",
       "discharge_date": "2028-01-02",
       "is_active": true
@@ -179,7 +180,7 @@ export const mockDb = {
       "id": "u19",
       "name": "전가람",
       "role": "soldier",
-      "company": "1중대",
+      "position": "소총수",
       "enlist_date": "2026-07-28",
       "discharge_date": "2028-01-27",
       "is_active": true
@@ -188,7 +189,7 @@ export const mockDb = {
       "id": "u20",
       "name": "홍새롬",
       "role": "soldier",
-      "company": "2중대",
+      "position": "경계병",
       "enlist_date": "2026-08-22",
       "discharge_date": "2028-02-21",
       "is_active": true
@@ -197,7 +198,7 @@ export const mockDb = {
       "id": "o01",
       "name": "백지훈",
       "role": "officer",
-      "company": "본부",
+      "position": "중대장",
       "enlist_date": "2019-03-04",
       "discharge_date": "2029-02-28",
       "is_active": true
@@ -206,7 +207,7 @@ export const mockDb = {
       "id": "o02",
       "name": "남궁현",
       "role": "officer",
-      "company": "본부",
+      "position": "행정보급관",
       "enlist_date": "2021-06-14",
       "discharge_date": "2027-06-30",
       "is_active": true

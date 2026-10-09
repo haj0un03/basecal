@@ -121,7 +121,7 @@ export function getDemoAccounts() {
     .filter((p) => p.is_active)
     .map((p) => ({
       name: p.name,
-      company: p.company,
+      position: p.position,
       role: p.role,
       code: mockAuth.find((a) => a.user_id === p.id)?.code ?? '',
     }));
@@ -132,6 +132,7 @@ export function getDemoAccounts() {
 
 const ROLES = ['soldier', 'officer'];
 const MAX_NAME_LENGTH = 20;
+const MAX_POSITION_LENGTH = 20;
 
 function nextId(prefix, rows) {
   const numbers = rows
@@ -162,10 +163,10 @@ function writeAuditLog(actor, action, targetTable, targetId, now) {
   });
 }
 
-// 소속 목록 (활성 인원의 소속에서 모은다)
-export function getCompanies() {
-  const companies = new Set(mockDb.profiles.filter((p) => p.is_active).map((p) => p.company));
-  return [...companies].sort((a, b) => a.localeCompare(b, 'ko'));
+// 지금 쓰이는 보직 목록. 입력할 때 추천으로 보여 줘서 "운전병"과 "운전 병"처럼 표기가 갈리는 것을 줄인다.
+export function getPositions() {
+  const positions = new Set(mockDb.profiles.filter((p) => p.is_active).map((p) => p.position));
+  return [...positions].sort((a, b) => a.localeCompare(b, 'ko'));
 }
 
 // 코드 다시 발급 대상 목록 (간부만)
@@ -173,8 +174,8 @@ export function getMembers() {
   if (!requireOfficer()) return [];
   return mockDb.profiles
     .filter((p) => p.is_active)
-    .map((p) => ({ id: p.id, name: p.name, company: p.company, role: p.role }))
-    .sort((a, b) => a.company.localeCompare(b.company, 'ko') || a.name.localeCompare(b.name, 'ko'));
+    .map((p) => ({ id: p.id, name: p.name, position: p.position, role: p.role }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.position.localeCompare(b.position, 'ko'));
 }
 
 // 결과: { ok: true, user, code } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
@@ -183,6 +184,7 @@ export function addMember(input, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
 
   const name = input.name.trim();
+  const position = input.position.trim().replace(/\s+/g, ' ');
   const errors = {};
   if (!name) {
     errors.name = '이름을 입력하세요.';
@@ -192,8 +194,10 @@ export function addMember(input, now = Date.now()) {
   if (!ROLES.includes(input.role)) {
     errors.role = '역할을 고르세요.';
   }
-  if (!getCompanies().includes(input.company)) {
-    errors.company = '소속을 고르세요.';
+  if (!position) {
+    errors.position = '보직을 입력하세요.';
+  } else if (position.length > MAX_POSITION_LENGTH) {
+    errors.position = `보직은 ${MAX_POSITION_LENGTH}자 이하로 입력하세요.`;
   }
   if (!isDate(input.enlist_date)) {
     errors.enlist_date = '입대일을 입력하세요.';
@@ -211,7 +215,7 @@ export function addMember(input, now = Date.now()) {
     id: nextId(input.role === 'officer' ? 'o' : 'u', mockDb.profiles),
     name,
     role: input.role,
-    company: input.company,
+    position,
     enlist_date: input.enlist_date,
     discharge_date: input.discharge_date,
     is_active: true,

@@ -4,7 +4,7 @@ import {
   signIn,
   signOut,
   getDemoAccounts,
-  getCompanies,
+  getPositions,
   getMembers,
   addMember,
   reissueCode,
@@ -127,16 +127,16 @@ function renderSignIn() {
     <details class="demo-hint">
       <summary>연습용 가상 인원 코드 보기</summary>
       <table class="demo-table">
-        <thead><tr><th>이름</th><th>소속</th><th>개인 코드</th></tr></thead>
+        <thead><tr><th>이름</th><th>보직</th><th>개인 코드</th></tr></thead>
         <tbody></tbody>
       </table>
     </details>
   `;
 
   const tbody = view.querySelector('.demo-table tbody');
-  getDemoAccounts().forEach(({ name, company, role, code }) => {
+  getDemoAccounts().forEach(({ name, position, role, code }) => {
     const tr = document.createElement('tr');
-    [name, `${company} · ${ROLE_LABELS[role]}`, code].forEach((text) => {
+    [name, `${position} · ${ROLE_LABELS[role]}`, code].forEach((text) => {
       const td = document.createElement('td');
       td.textContent = text;
       tr.append(td);
@@ -216,8 +216,10 @@ function openAddMemberDialog() {
         </div>
       </fieldset>
       <label class="field">
-        <span class="field-label">소속</span>
-        <select name="company"></select>
+        <span class="field-label">보직</span>
+        <input name="position" list="position-options" maxlength="20" required>
+        <datalist id="position-options"></datalist>
+        <span class="field-error" data-error-for="position" hidden></span>
       </label>
       ${field('enlist_date', '입대일', 'date')}
       ${field('discharge_date', '전역 예정일', 'date')}
@@ -228,12 +230,12 @@ function openAddMemberDialog() {
   `;
 
   const form = memberDialog.querySelector('form');
-  const select = form.elements.company;
-  getCompanies().forEach((company) => {
+  // 이미 쓰이는 보직을 추천 목록으로 보여 준다. 목록에 없는 보직도 입력할 수 있다.
+  const datalist = form.querySelector('#position-options');
+  getPositions().forEach((position) => {
     const option = document.createElement('option');
-    option.value = company;
-    option.textContent = company;
-    select.append(option);
+    option.value = position;
+    datalist.append(option);
   });
 
   form.addEventListener('submit', (e) => {
@@ -245,7 +247,7 @@ function openAddMemberDialog() {
     const result = addMember({
       name: form.elements.name.value,
       role: form.elements.role.value,
-      company: select.value,
+      position: form.elements.position.value,
       enlist_date: form.elements.enlist_date.value,
       discharge_date: form.elements.discharge_date.value,
     });
@@ -293,10 +295,10 @@ function openReissueDialog() {
 
   const form = memberDialog.querySelector('form');
   const select = form.elements.member;
-  getMembers().forEach(({ id, name, company, role }) => {
+  getMembers().forEach(({ id, name, position, role }) => {
     const option = document.createElement('option');
     option.value = id;
-    option.textContent = `${company} · ${name} (${ROLE_LABELS[role]})`;
+    option.textContent = `${name} · ${position} (${ROLE_LABELS[role]})`;
     select.append(option);
   });
 
@@ -327,7 +329,7 @@ function showIssuedCode({ user, code }, title) {
     </div>
   `;
   memberDialog.querySelector('h2').textContent = title;
-  memberDialog.querySelector('.issued-target').textContent = `${user.name} · ${user.company} · ${ROLE_LABELS[user.role]}`;
+  memberDialog.querySelector('.issued-target').textContent = `${user.name} · ${user.position} · ${ROLE_LABELS[user.role]}`;
   const codeEl = memberDialog.querySelector('.issued-code');
   codeEl.textContent = formatCode(code);
   codeEl.setAttribute('aria-label', `개인 코드 ${code.split('').join(' ')}`);
@@ -363,7 +365,7 @@ function renderUser(user) {
   name.textContent = user.name;
   const sub = document.createElement('div');
   sub.className = 'user-menu-sub';
-  sub.textContent = `${user.company} · ${ROLE_LABELS[user.role]}`;
+  sub.textContent = `${user.position} · ${ROLE_LABELS[user.role]}`;
   info.append(name, sub);
 
   const items = [];
