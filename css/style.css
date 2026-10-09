@@ -190,7 +190,7 @@ body.signed-out .view {
   font-size: 0.95rem;
 }
 
-.field input {
+.field input:not([type="radio"]) {
   min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--border);
@@ -202,7 +202,8 @@ body.signed-out .view {
   font-size: 16px;
 }
 
-.field input:focus {
+.field input:not([type="radio"]):focus,
+.field select:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -241,6 +242,122 @@ body.signed-out .view {
 .secondary-button:disabled {
   color: var(--text-muted);
   cursor: default;
+}
+
+.help {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.summary-box {
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+}
+
+.field-error {
+  color: #a12222;
+  font-size: 0.9rem;
+}
+
+.field select {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+fieldset.field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice-row {
+  display: flex;
+  gap: 8px;
+}
+
+.choice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 보안코드 발급 창 */
+.dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 16px 16px;
+}
+
+.dialog-body h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.dialog-body .help {
+  margin: 0;
+}
+
+.issued-code {
+  margin: 4px 0 0;
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.issued-code.expired {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.issued-target,
+.issued-timer {
+  margin: 0;
+  text-align: center;
+}
+
+.issued-timer {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .demo-hint {
