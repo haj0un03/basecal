@@ -1,12 +1,13 @@
-// 앱의 시작점. 로그인하지 않았으면 로그인 화면을, 로그인했으면 사용자 영역과 아래쪽 탭을 그린다.
+// 앱의 시작점. 들어오지 않았으면 들어오기 화면을, 들어왔으면 사용자 영역과 아래쪽 탭을 그린다.
 import {
   getCurrentUser,
   signIn,
   signOut,
+  getDemoAccounts,
   getCompanies,
-  issueInviteCode,
-  checkInviteCode,
-  registerWithCode,
+  getMembers,
+  addMember,
+  reissueCode,
 } from './data.js';
 
 // 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
@@ -44,22 +45,19 @@ const OLD_TABS = { leave: 'apply', facility: 'apply' };
 
 const ROLE_LABELS = { soldier: '병사', officer: '간부' };
 
-const CODE_ERRORS = {
-  format: '보안코드 6자리 숫자를 입력하세요.',
-  not_found: '맞지 않는 보안코드입니다. 간부에게 다시 확인하세요.',
-  used: '이미 사용한 보안코드입니다. 간부에게 새 코드를 받으세요.',
-  expired: '시간이 지나 만료된 보안코드입니다. 간부에게 새 코드를 받으세요.',
-};
-
 const view = document.getElementById('view');
 const userButton = document.getElementById('user-button');
 const userMenu = document.getElementById('user-menu');
-const inviteDialog = document.getElementById('invite-dialog');
+const memberDialog = document.getElementById('member-dialog');
 
 function currentTab() {
   const hash = location.hash.slice(1);
   const tab = OLD_TABS[hash] ?? hash;
   return TABS[tab] ? tab : 'calendar';
+}
+
+function formatCode(code) {
+  return `${code.slice(0, 3)} ${code.slice(3)}`;
 }
 
 function placeholder(text, officerOnly = false) {
@@ -107,32 +105,48 @@ function renderView(user) {
   document.title = `${title} - 부대 달력`;
 }
 
-function renderLogin() {
-  document.title = '로그인 - 부대 달력';
+// ── 들어오기 화면: 이름 + 개인 코드 ──────────────────────────
+
+function renderSignIn() {
+  document.title = '들어오기 - 부대 달력';
   view.innerHTML = `
-    <h1>로그인</h1>
+    <h1>들어오기</h1>
+    <p class="help">이름과 간부에게 받은 개인 코드를 입력하세요. 코드를 잊었다면 간부에게 다시 발급받으세요.</p>
     <form class="login-form" novalidate>
       <label class="field">
-        <span class="field-label">아이디</span>
-        <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        <span class="field-label">이름</span>
+        <input name="name" autocomplete="name" maxlength="20" required>
       </label>
       <label class="field">
-        <span class="field-label">비밀번호</span>
-        <input name="password" type="password" autocomplete="current-password" required>
+        <span class="field-label">개인 코드 (영문·숫자 6자리)</span>
+        <input name="code" class="code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="7" required>
       </label>
       <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary-button">로그인</button>
+      <button type="submit" class="primary-button">들어가기</button>
     </form>
-    <button type="button" class="secondary-button" data-action="register">보안코드로 등록하기</button>
-    <aside class="demo-hint">
-      <strong>연습용 가상 계정</strong>
-      <span>병사: soldier01 ~ soldier20</span>
-      <span>간부: officer01, officer02</span>
-      <span>비밀번호: test1234</span>
-    </aside>
+    <details class="demo-hint">
+      <summary>연습용 가상 인원 코드 보기</summary>
+      <table class="demo-table">
+        <thead><tr><th>이름</th><th>소속</th><th>개인 코드</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
   `;
 
+  const tbody = view.querySelector('.demo-table tbody');
+  getDemoAccounts().forEach(({ name, company, role, code }) => {
+    const tr = document.createElement('tr');
+    [name, `${company} · ${ROLE_LABELS[role]}`, code].forEach((text) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+
   const form = view.querySelector('.login-form');
+  const nameInput = form.elements.name;
+  const codeInput = form.elements.code;
   const error = view.querySelector('.form-error');
   const showError = (message) => {
     error.textContent = message;
@@ -141,155 +155,59 @@ function renderLogin() {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const username = form.username.value;
-    const password = form.password.value;
-    if (!username.trim() || !password) {
-      showError('아이디와 비밀번호를 입력하세요.');
+    if (!nameInput.value.trim() || !codeInput.value.trim()) {
+      showError('이름과 개인 코드를 입력하세요.');
       return;
     }
 
-    const result = signIn(username, password);
+    const result = signIn(nameInput.value, codeInput.value);
     if (result.ok) {
       history.replaceState(null, '', '#calendar');
       render();
       return;
     }
 
-    form.password.value = '';
-    form.password.focus();
-    if (result.reason === 'locked') {
+    codeInput.value = '';
+    codeInput.focus();
+    if (result.reason === 'format') {
+      showError('개인 코드는 영문·숫자 6자리입니다. 0, O, 1, I, L은 쓰지 않습니다.');
+    } else if (result.reason === 'locked') {
       const minutes = Math.ceil((result.lockedUntil - Date.now()) / 60000);
-      showError(`비밀번호를 5회 연속 틀려 로그인이 막혔습니다. ${minutes}분 뒤에 다시 시도하세요.`);
+      showError(`5회 연속 틀려 이 이름으로는 들어올 수 없습니다. ${minutes}분 뒤에 다시 시도하세요.`);
     } else if (result.reason === 'inactive') {
-      showError('사용할 수 없는 계정입니다. 간부에게 문의하세요.');
+      showError('사용할 수 없는 인원입니다. 간부에게 문의하세요.');
     } else {
-      showError(`아이디 또는 비밀번호가 맞지 않습니다. (남은 시도 ${result.remainingAttempts}회)`);
+      showError(`이름 또는 개인 코드가 맞지 않습니다. (남은 시도 ${result.remainingAttempts}회)`);
     }
   });
 
-  view.querySelector('[data-action="register"]').addEventListener('click', renderCodeEntry);
-  form.username.focus();
+  nameInput.focus();
 }
 
-// 등록 1단계: 간부에게 받은 보안코드 입력
-function renderCodeEntry() {
-  document.title = '보안코드로 등록하기 - 부대 달력';
-  view.innerHTML = `
-    <h1>보안코드로 등록하기</h1>
-    <p class="help">간부에게 직접 받은 6자리 보안코드를 입력하세요. 코드는 발급 후 10분 동안 한 번만 쓸 수 있습니다.</p>
-    <form class="login-form" novalidate>
-      <label class="field">
-        <span class="field-label">보안코드</span>
-        <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
-      </label>
-      <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary-button">확인</button>
-    </form>
-    <button type="button" class="secondary-button" data-action="back">로그인으로 돌아가기</button>
-  `;
+// ── 간부: 인원 추가·코드 발급, 코드 다시 발급 ──────────────────
 
-  const form = view.querySelector('form');
-  const error = view.querySelector('.form-error');
+function closeButton(label = '취소') {
+  return `<button type="button" class="secondary-button" data-action="close">${label}</button>`;
+}
 
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const code = form.code.value.trim();
-    const result = checkInviteCode(code);
-    if (!result.ok) {
-      error.textContent = CODE_ERRORS[result.reason];
-      error.hidden = false;
-      form.code.focus();
-      return;
-    }
-    renderRegisterForm(code, result);
+function bindClose() {
+  memberDialog.querySelectorAll('[data-action="close"]').forEach((button) => {
+    button.addEventListener('click', () => memberDialog.close());
   });
-
-  view.querySelector('[data-action="back"]').addEventListener('click', render);
-  form.code.focus();
 }
 
-// 등록 2단계: 본인 정보 입력
-function renderRegisterForm(code, { role, company }) {
-  const field = (name, label, type = 'text', attrs = '') => `
+function openAddMemberDialog() {
+  const field = (name, label, type) => `
     <label class="field">
       <span class="field-label">${label}</span>
-      <input name="${name}" type="${type}" ${attrs} required>
+      <input name="${name}" type="${type}" required>
       <span class="field-error" data-error-for="${name}" hidden></span>
     </label>`;
 
-  view.innerHTML = `
-    <h1>정보 입력</h1>
-    <p class="summary-box">보안코드가 확인되었습니다. <strong class="register-target"></strong> 계정으로 등록합니다.</p>
-    <form class="login-form" novalidate>
-      ${field('name', '이름', 'text', 'autocomplete="name" maxlength="20"')}
-      ${field('username', '아이디 (영문 소문자·숫자 4~20자)', 'text', 'autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"')}
-      ${field('password', '비밀번호 (8자 이상)', 'password', 'autocomplete="new-password"')}
-      ${field('passwordConfirm', '비밀번호 확인', 'password', 'autocomplete="new-password"')}
-      ${field('enlist_date', '입대일', 'date')}
-      ${field('discharge_date', '전역 예정일', 'date')}
-      <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary-button">등록하기</button>
-    </form>
-    <button type="button" class="secondary-button" data-action="back">처음으로 돌아가기</button>
-  `;
-  view.querySelector('.register-target').textContent = `${company} · ${ROLE_LABELS[role]}`;
-
-  const form = view.querySelector('form');
-  const formError = view.querySelector('.form-error');
-
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    view.querySelectorAll('.field-error').forEach((el) => {
-      el.hidden = true;
-    });
-    formError.hidden = true;
-
-    const result = registerWithCode({
-      code,
-      name: form.elements.name.value,
-      username: form.username.value,
-      password: form.password.value,
-      passwordConfirm: form.passwordConfirm.value,
-      enlist_date: form.enlist_date.value,
-      discharge_date: form.discharge_date.value,
-    });
-
-    if (result.ok) {
-      history.replaceState(null, '', '#calendar');
-      render();
-      return;
-    }
-
-    if (result.reason === 'invalid') {
-      Object.entries(result.errors).forEach(([name, message]) => {
-        const el = view.querySelector(`[data-error-for="${name}"]`);
-        el.textContent = message;
-        el.hidden = false;
-      });
-      form.elements[Object.keys(result.errors)[0]].focus();
-      return;
-    }
-
-    // 입력하는 사이에 코드가 만료되었거나 다른 사람이 먼저 썼다.
-    formError.textContent = CODE_ERRORS[result.reason];
-    formError.hidden = false;
-  });
-
-  view.querySelector('[data-action="back"]').addEventListener('click', render);
-  form.elements.name.focus();
-}
-
-// 간부: 일회용 보안코드 발급 창
-let countdownTimer = null;
-
-function formatCode(code) {
-  return `${code.slice(0, 3)} ${code.slice(3)}`;
-}
-
-function openInviteDialog() {
-  inviteDialog.innerHTML = `
+  memberDialog.innerHTML = `
     <form class="dialog-body" novalidate>
-      <h2 id="invite-title">일회용 보안코드 발급</h2>
+      <h2 id="member-dialog-title">인원 추가·코드 발급</h2>
+      ${field('name', '이름', 'text')}
       <fieldset class="field">
         <legend class="field-label">역할</legend>
         <div class="choice-row">
@@ -301,13 +219,15 @@ function openInviteDialog() {
         <span class="field-label">소속</span>
         <select name="company"></select>
       </label>
+      ${field('enlist_date', '입대일', 'date')}
+      ${field('discharge_date', '전역 예정일', 'date')}
       <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary-button">발급하기</button>
-      <button type="button" class="secondary-button" data-action="close">취소</button>
+      <button type="submit" class="primary-button">추가하고 코드 발급</button>
+      ${closeButton()}
     </form>
   `;
 
-  const form = inviteDialog.querySelector('form');
+  const form = memberDialog.querySelector('form');
   const select = form.elements.company;
   getCompanies().forEach((company) => {
     const option = document.createElement('option');
@@ -318,59 +238,120 @@ function openInviteDialog() {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const result = issueInviteCode({ role: form.elements.role.value, company: select.value });
-    if (!result.ok) {
-      const error = form.querySelector('.form-error');
-      error.textContent = result.reason === 'forbidden' ? '간부만 보안코드를 발급할 수 있습니다.' : '역할과 소속을 다시 골라 주세요.';
-      error.hidden = false;
+    memberDialog.querySelectorAll('.field-error, .form-error').forEach((el) => {
+      el.hidden = true;
+    });
+
+    const result = addMember({
+      name: form.elements.name.value,
+      role: form.elements.role.value,
+      company: select.value,
+      enlist_date: form.elements.enlist_date.value,
+      discharge_date: form.elements.discharge_date.value,
+    });
+
+    if (result.ok) {
+      showIssuedCode(result, '인원을 추가했습니다');
       return;
     }
-    showIssuedCode(result);
+    if (result.reason === 'invalid') {
+      Object.entries(result.errors).forEach(([name, message]) => {
+        const el = memberDialog.querySelector(`[data-error-for="${name}"]`);
+        if (el) {
+          el.textContent = message;
+          el.hidden = false;
+        }
+      });
+      const first = Object.keys(result.errors)[0];
+      form.elements[first]?.focus?.();
+      return;
+    }
+    const error = memberDialog.querySelector('.form-error');
+    error.textContent = '간부만 인원을 추가할 수 있습니다.';
+    error.hidden = false;
   });
 
-  inviteDialog.querySelector('[data-action="close"]').addEventListener('click', () => inviteDialog.close());
-  inviteDialog.showModal();
+  bindClose();
+  memberDialog.showModal();
+  form.elements.name.focus();
 }
 
-function showIssuedCode({ code, role, company, expiresAt }) {
-  inviteDialog.innerHTML = `
+function openReissueDialog() {
+  memberDialog.innerHTML = `
+    <form class="dialog-body" novalidate>
+      <h2 id="member-dialog-title">코드 다시 발급</h2>
+      <label class="field">
+        <span class="field-label">대상</span>
+        <select name="member"></select>
+      </label>
+      <p class="help">다시 발급하면 지금 쓰던 코드는 바로 쓸 수 없게 됩니다.</p>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">다시 발급</button>
+      ${closeButton()}
+    </form>
+  `;
+
+  const form = memberDialog.querySelector('form');
+  const select = form.elements.member;
+  getMembers().forEach(({ id, name, company, role }) => {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = `${company} · ${name} (${ROLE_LABELS[role]})`;
+    select.append(option);
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const result = reissueCode(select.value);
+    if (result.ok) {
+      showIssuedCode(result, '코드를 다시 발급했습니다');
+      return;
+    }
+    const error = memberDialog.querySelector('.form-error');
+    error.textContent = result.reason === 'forbidden' ? '간부만 코드를 발급할 수 있습니다.' : '대상을 다시 골라 주세요.';
+    error.hidden = false;
+  });
+
+  bindClose();
+  memberDialog.showModal();
+}
+
+function showIssuedCode({ user, code }, title) {
+  memberDialog.innerHTML = `
     <div class="dialog-body">
-      <h2 id="invite-title">발급된 보안코드</h2>
-      <p class="issued-code"></p>
+      <h2 id="member-dialog-title"></h2>
       <p class="issued-target"></p>
-      <p class="issued-timer" aria-live="polite"></p>
-      <p class="help">병사와 직접 만난 자리에서 알려 주세요. 10분 동안 한 번만 쓸 수 있습니다.</p>
+      <p class="issued-code"></p>
+      <p class="help">본인과 직접 만난 자리에서 알려 주세요. 이 창을 닫으면 코드를 다시 볼 수 없고, 잊으면 "코드 다시 발급"으로 새로 만듭니다.</p>
       <button type="button" class="primary-button" data-action="close">닫기</button>
     </div>
   `;
-  const codeEl = inviteDialog.querySelector('.issued-code');
+  memberDialog.querySelector('h2').textContent = title;
+  memberDialog.querySelector('.issued-target').textContent = `${user.name} · ${user.company} · ${ROLE_LABELS[user.role]}`;
+  const codeEl = memberDialog.querySelector('.issued-code');
   codeEl.textContent = formatCode(code);
-  codeEl.setAttribute('aria-label', `보안코드 ${code.split('').join(' ')}`);
-  inviteDialog.querySelector('.issued-target').textContent = `${company} · ${ROLE_LABELS[role]}`;
-
-  const timer = inviteDialog.querySelector('.issued-timer');
-  const tick = () => {
-    const left = Math.max(0, Date.parse(expiresAt) - Date.now());
-    if (left === 0) {
-      timer.textContent = '만료되었습니다. 새 코드를 발급하세요.';
-      codeEl.classList.add('expired');
-      clearInterval(countdownTimer);
-      return;
-    }
-    const seconds = Math.ceil(left / 1000);
-    timer.textContent = `남은 시간 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  };
-  clearInterval(countdownTimer);
-  tick();
-  countdownTimer = setInterval(tick, 1000);
-
-  inviteDialog.querySelector('[data-action="close"]').addEventListener('click', () => inviteDialog.close());
+  codeEl.setAttribute('aria-label', `개인 코드 ${code.split('').join(' ')}`);
+  bindClose();
 }
 
-inviteDialog.addEventListener('close', () => {
-  clearInterval(countdownTimer);
-  inviteDialog.replaceChildren();
+// 닫힘 알림은 조금 늦게 온다. 그 사이 다른 창을 열었다면 지우지 않는다.
+memberDialog.addEventListener('close', () => {
+  if (!memberDialog.open) memberDialog.replaceChildren();
 });
+
+// ── 사용자 메뉴와 전체 그리기 ───────────────────────────────
+
+function menuButton(label, onClick) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'user-menu-item';
+  item.textContent = label;
+  item.addEventListener('click', () => {
+    setMenuOpen(false);
+    onClick();
+  });
+  return item;
+}
 
 function renderUser(user) {
   userButton.textContent = `${user.name} ▾`;
@@ -385,37 +366,20 @@ function renderUser(user) {
   sub.textContent = `${user.company} · ${ROLE_LABELS[user.role]}`;
   info.append(name, sub);
 
-  // 비밀번호 변경은 아직 만들지 않았다.
-  const changePassword = document.createElement('button');
-  changePassword.type = 'button';
-  changePassword.className = 'user-menu-item';
-  changePassword.textContent = '비밀번호 변경 (준비 중)';
-  changePassword.disabled = true;
-  const items = [changePassword];
-
+  const items = [];
   if (user.role === 'officer') {
-    const issue = document.createElement('button');
-    issue.type = 'button';
-    issue.className = 'user-menu-item';
-    issue.textContent = '일회용 보안코드 발급';
-    issue.addEventListener('click', () => {
-      setMenuOpen(false);
-      openInviteDialog();
-    });
-    items.unshift(issue);
+    items.push(menuButton('인원 추가·코드 발급', openAddMemberDialog));
+    items.push(menuButton('코드 다시 발급', openReissueDialog));
   }
+  items.push(
+    menuButton('로그아웃', () => {
+      signOut();
+      history.replaceState(null, '', location.pathname);
+      render();
+    }),
+  );
 
-  const logout = document.createElement('button');
-  logout.type = 'button';
-  logout.className = 'user-menu-item';
-  logout.textContent = '로그아웃';
-  logout.addEventListener('click', () => {
-    signOut();
-    history.replaceState(null, '', location.pathname);
-    render();
-  });
-
-  userMenu.replaceChildren(info, ...items, logout);
+  userMenu.replaceChildren(info, ...items);
 }
 
 function render() {
@@ -423,7 +387,7 @@ function render() {
   setMenuOpen(false);
   document.body.classList.toggle('signed-out', !user);
   if (!user) {
-    renderLogin();
+    renderSignIn();
     return;
   }
   renderUser(user);

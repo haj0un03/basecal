@@ -2,7 +2,7 @@
 // - 모든 이름과 일정은 지어낸 것이다. 실제 병사 정보를 넣지 않는다.
 // - 표 이름은 prd.md 7번(Supabase 표 이름)과 같다. Phase 5에서 저장만 바꿔 끼운다.
 // - 화면 코드는 이 파일을 직접 읽지 않고, 데이터 계층(Phase 1에서 만든다)을 거친다.
-// - 비밀번호는 Supabase 인증이 따로 관리하므로 profiles에 넣지 않는다.
+// - 개인 코드는 Supabase 인증이 따로 관리하므로 profiles에 넣지 않는다 (아래 mockAuth).
 //
 // 값의 뜻
 // - profiles.role: soldier(병사), officer(간부)
@@ -16,7 +16,6 @@ export const mockDb = {
     {
       "id": "u01",
       "name": "김하늘",
-      "username": "soldier01",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2025-05-04",
@@ -26,7 +25,6 @@ export const mockDb = {
     {
       "id": "u02",
       "name": "이바다",
-      "username": "soldier02",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2025-05-29",
@@ -36,7 +34,6 @@ export const mockDb = {
     {
       "id": "u03",
       "name": "박가온",
-      "username": "soldier03",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2025-06-23",
@@ -46,7 +43,6 @@ export const mockDb = {
     {
       "id": "u04",
       "name": "최나래",
-      "username": "soldier04",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2025-07-18",
@@ -56,7 +52,6 @@ export const mockDb = {
     {
       "id": "u05",
       "name": "정다온",
-      "username": "soldier05",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2025-08-12",
@@ -66,7 +61,6 @@ export const mockDb = {
     {
       "id": "u06",
       "name": "강보람",
-      "username": "soldier06",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2025-09-06",
@@ -76,7 +70,6 @@ export const mockDb = {
     {
       "id": "u07",
       "name": "조새벽",
-      "username": "soldier07",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2025-10-01",
@@ -86,7 +79,6 @@ export const mockDb = {
     {
       "id": "u08",
       "name": "윤겨울",
-      "username": "soldier08",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2025-10-26",
@@ -96,7 +88,6 @@ export const mockDb = {
     {
       "id": "u09",
       "name": "장한결",
-      "username": "soldier09",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2025-11-20",
@@ -106,7 +97,6 @@ export const mockDb = {
     {
       "id": "u10",
       "name": "임도담",
-      "username": "soldier10",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2025-12-15",
@@ -116,7 +106,6 @@ export const mockDb = {
     {
       "id": "u11",
       "name": "한마루",
-      "username": "soldier11",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2026-01-09",
@@ -126,7 +115,6 @@ export const mockDb = {
     {
       "id": "u12",
       "name": "오여름",
-      "username": "soldier12",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2026-02-03",
@@ -136,7 +124,6 @@ export const mockDb = {
     {
       "id": "u13",
       "name": "서누리",
-      "username": "soldier13",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2026-02-28",
@@ -146,7 +133,6 @@ export const mockDb = {
     {
       "id": "u14",
       "name": "신다솜",
-      "username": "soldier14",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2026-03-25",
@@ -156,7 +142,6 @@ export const mockDb = {
     {
       "id": "u15",
       "name": "권별하",
-      "username": "soldier15",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2026-04-19",
@@ -166,7 +151,6 @@ export const mockDb = {
     {
       "id": "u16",
       "name": "황이랑",
-      "username": "soldier16",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2026-05-14",
@@ -176,7 +160,6 @@ export const mockDb = {
     {
       "id": "u17",
       "name": "안소울",
-      "username": "soldier17",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2026-06-08",
@@ -186,7 +169,6 @@ export const mockDb = {
     {
       "id": "u18",
       "name": "송하람",
-      "username": "soldier18",
       "role": "soldier",
       "company": "3중대",
       "enlist_date": "2026-07-03",
@@ -196,7 +178,6 @@ export const mockDb = {
     {
       "id": "u19",
       "name": "전가람",
-      "username": "soldier19",
       "role": "soldier",
       "company": "1중대",
       "enlist_date": "2026-07-28",
@@ -206,7 +187,6 @@ export const mockDb = {
     {
       "id": "u20",
       "name": "홍새롬",
-      "username": "soldier20",
       "role": "soldier",
       "company": "2중대",
       "enlist_date": "2026-08-22",
@@ -216,7 +196,6 @@ export const mockDb = {
     {
       "id": "o01",
       "name": "백지훈",
-      "username": "officer01",
       "role": "officer",
       "company": "본부",
       "enlist_date": "2019-03-04",
@@ -226,7 +205,6 @@ export const mockDb = {
     {
       "id": "o02",
       "name": "남궁현",
-      "username": "officer02",
       "role": "officer",
       "company": "본부",
       "enlist_date": "2021-06-14",
@@ -234,7 +212,6 @@ export const mockDb = {
       "is_active": true
     }
   ],
-  "invite_codes": [],
   "events": [
     {
       "id": "e01",
@@ -298,96 +275,97 @@ export const mockDb = {
   "audit_logs": []
 };
 
-// 로그인 흉내용 비밀번호 (Phase 0~4 전용)
-// - Supabase 인증 기능을 흉내 낸다. Phase 5에서는 Supabase가 비밀번호를 해시로 따로 관리하므로 이 목록을 지운다.
-// - 가상 계정 전용 연습 비밀번호다. 실제 비밀번호를 넣지 않는다.
+// 로그인 흉내용 개인 코드 (Phase 0~4 전용)
+// - 간부가 사람마다 발급하는 영문·숫자 6자리 코드. 헷갈리는 0, O, 1, I, L은 쓰지 않는다.
+// - Supabase 인증 기능을 흉내 낸다. Phase 5에서는 Supabase가 해시로 따로 관리하므로 이 목록을 지운다.
+// - 가상 인원 전용 연습 코드다. 실제 코드를 넣지 않는다.
 export const mockAuth = [
   {
     "user_id": "u01",
-    "password": "test1234"
+    "code": "CZUTP6"
   },
   {
     "user_id": "u02",
-    "password": "test1234"
+    "code": "X4DVGP"
   },
   {
     "user_id": "u03",
-    "password": "test1234"
+    "code": "KM9YWP"
   },
   {
     "user_id": "u04",
-    "password": "test1234"
+    "code": "PESAZ9"
   },
   {
     "user_id": "u05",
-    "password": "test1234"
+    "code": "W95HUP"
   },
   {
     "user_id": "u06",
-    "password": "test1234"
+    "code": "T3TTC3"
   },
   {
     "user_id": "u07",
-    "password": "test1234"
+    "code": "R2M4MF"
   },
   {
     "user_id": "u08",
-    "password": "test1234"
+    "code": "4DEGQ6"
   },
   {
     "user_id": "u09",
-    "password": "test1234"
+    "code": "5C3E45"
   },
   {
     "user_id": "u10",
-    "password": "test1234"
+    "code": "U5QXRQ"
   },
   {
     "user_id": "u11",
-    "password": "test1234"
+    "code": "8J4HNN"
   },
   {
     "user_id": "u12",
-    "password": "test1234"
+    "code": "JTP49P"
   },
   {
     "user_id": "u13",
-    "password": "test1234"
+    "code": "NGQETQ"
   },
   {
     "user_id": "u14",
-    "password": "test1234"
+    "code": "2YANKY"
   },
   {
     "user_id": "u15",
-    "password": "test1234"
+    "code": "AVYQTT"
   },
   {
     "user_id": "u16",
-    "password": "test1234"
+    "code": "JE3HGK"
   },
   {
     "user_id": "u17",
-    "password": "test1234"
+    "code": "JQYGNU"
   },
   {
     "user_id": "u18",
-    "password": "test1234"
+    "code": "CXVEDD"
   },
   {
     "user_id": "u19",
-    "password": "test1234"
+    "code": "WTRKUD"
   },
   {
     "user_id": "u20",
-    "password": "test1234"
+    "code": "W97YAV"
   },
   {
     "user_id": "o01",
-    "password": "test1234"
+    "code": "YCM2Y5"
   },
   {
     "user_id": "o02",
-    "password": "test1234"
+    "code": "BQEPH8"
   }
 ];

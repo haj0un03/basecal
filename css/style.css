@@ -360,16 +360,45 @@ fieldset.field {
   font-weight: 600;
 }
 
+/* 개인 코드 입력: 대문자로 보이고 글자 간격을 넓힌다 */
+.field input.code-input {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-variant-numeric: tabular-nums;
+}
+
 .demo-hint {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   margin-top: 24px;
   padding: 12px;
   border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.demo-hint summary {
+  min-height: 32px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.demo-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.demo-table th,
+.demo-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.demo-table td:last-child {
+  font-family: ui-monospace, Consolas, monospace;
+  letter-spacing: 0.1em;
+  color: var(--text);
 }
 
 /* 아래쪽: 탭 */
