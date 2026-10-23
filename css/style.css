@@ -656,6 +656,117 @@ body {
   font-size: 0.85rem;
 }
 
+/* ── 신청 탭: 휴가 영역 ── */
+.leave-notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.leave-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.leave-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.leave-card-type {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.leave-card-remaining {
+  color: var(--type-leave);
+  font-size: 1.4rem;
+}
+
+.leave-card-detail {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.leave-sub-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 20px 0 4px;
+}
+
+.leave-sub-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.grant-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grant-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.grant-title {
+  font-weight: 600;
+}
+
+.grant-meta {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.grant-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.small-button.approve {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 상태 표시: 색과 글자를 함께 */
+.status-badge {
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.status-badge.status-pending { color: #b26a00; }
+.status-badge.status-approved { color: var(--accent); }
+.status-badge.status-rejected { color: #a12222; }
+
 /* 로그인 화면 */
 body.signed-out .user-area,
 body.signed-out .tabbar {

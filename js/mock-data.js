@@ -10,6 +10,10 @@
 // - events.type: personal(개인), duty(근무), unit(부대), leave(휴가), overnight(외박), outing(외출)
 // - events.unit_category: training(훈련), inspection(점검), event(행사), other(기타)
 //   훈련은 제목과 설명 없이 "훈련"으로만 표시하므로 title을 비워 둔다.
+// - leave_grants: 받은 휴가 일수. leave_type: annual(연가), reward(포상휴가), consolation(위로휴가)
+//   status: pending(대기), approved(승인), rejected(반려). 승인된 것만 남은 일수에 들어간다.
+//   일수는 모두 가상 값이다.
+// - leave_requests.kind: leave(휴가), overnight(외박), outing(외출) / status: requested(신청), cancelled(취소)
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
 
 export const mockDb = {
@@ -251,7 +255,272 @@ export const mockDb = {
       "unit_category": "training"
     }
   ],
-  "leave_grants": [],
+  "leave_grants": [
+    {
+      "id": "g01",
+      "user_id": "u01",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g02",
+      "user_id": "u02",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g03",
+      "user_id": "u03",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g04",
+      "user_id": "u04",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g05",
+      "user_id": "u05",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g06",
+      "user_id": "u06",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g07",
+      "user_id": "u07",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g08",
+      "user_id": "u08",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g09",
+      "user_id": "u09",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g10",
+      "user_id": "u10",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g11",
+      "user_id": "u11",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g12",
+      "user_id": "u12",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g13",
+      "user_id": "u13",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g14",
+      "user_id": "u14",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g15",
+      "user_id": "u15",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g16",
+      "user_id": "u16",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g17",
+      "user_id": "u17",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g18",
+      "user_id": "u18",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g19",
+      "user_id": "u19",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g20",
+      "user_id": "u20",
+      "leave_type": "annual",
+      "days": 24,
+      "reason": "정기 연가",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-01-02T09:00:00.000Z",
+      "decided_at": "2026-01-02T09:00:00.000Z"
+    },
+    {
+      "id": "g21",
+      "user_id": "u01",
+      "leave_type": "reward",
+      "days": 3,
+      "reason": "체육대회 우승",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-10-17T09:00:00.000Z",
+      "decided_at": "2026-10-17T09:00:00.000Z"
+    },
+    {
+      "id": "g22",
+      "user_id": "u01",
+      "leave_type": "consolation",
+      "days": 2,
+      "reason": "장기 파견 위로",
+      "status": "pending",
+      "decided_by": null,
+      "requested_at": "2026-10-20T09:00:00.000Z",
+      "decided_at": null
+    },
+    {
+      "id": "g23",
+      "user_id": "u02",
+      "leave_type": "reward",
+      "days": 2,
+      "reason": "경계 근무 유공",
+      "status": "pending",
+      "decided_by": null,
+      "requested_at": "2026-10-21T09:00:00.000Z",
+      "decided_at": null
+    },
+    {
+      "id": "g24",
+      "user_id": "u03",
+      "leave_type": "reward",
+      "days": 1,
+      "reason": "생활관 점검 우수",
+      "status": "rejected",
+      "decided_by": "o02",
+      "requested_at": "2026-10-15T09:00:00.000Z",
+      "decided_at": "2026-10-15T09:00:00.000Z"
+    }
+  ],
   "leave_requests": [],
   "leave_request_items": [],
   "leave_settings": [],

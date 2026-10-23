@@ -471,3 +471,111 @@ export function reissueCode(userId, now = Date.now()) {
   writeAuditLog(officer, 'reissue_code', 'profiles', profile.id, now);
   return { ok: true, user: { ...profile }, code: auth.code };
 }
+
+// ── 휴가 일수 (Phase 3-1) ───────────────────────────────────
+// 남은 일수는 저장하지 않고 매번 계산한다: 간부가 승인한 받은 일수 − 신청된 휴가의 사용 일수 합계.
+
+export const LEAVE_TYPES = ['annual', 'reward', 'consolation'];
+const MAX_GRANT_DAYS = 30;
+const MAX_REASON_LENGTH = 100;
+
+// 종류별 쓴 일수: 취소하지 않은 휴가 신청의 사용 일수 합계 (휴가 신청은 3-2에서 만든다)
+function usedDays(userId) {
+  const used = Object.fromEntries(LEAVE_TYPES.map((t) => [t, 0]));
+  const activeIds = new Set(
+    mockDb.leave_requests
+      .filter((r) => r.user_id === userId && r.kind === 'leave' && r.status === 'requested')
+      .map((r) => r.id),
+  );
+  mockDb.leave_request_items
+    .filter((item) => activeIds.has(item.request_id))
+    .forEach((item) => {
+      used[item.leave_type] += item.days;
+    });
+  return used;
+}
+
+// 병사만. 결과: [{ leave_type, granted, used, remaining }] (연가·포상휴가·위로휴가 순)
+export function getMyLeaveSummary() {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return [];
+  const used = usedDays(user.id);
+  return LEAVE_TYPES.map((type) => {
+    const granted = mockDb.leave_grants
+      .filter((g) => g.user_id === user.id && g.leave_type === type && g.status === 'approved')
+      .reduce((sum, g) => sum + g.days, 0);
+    return { leave_type: type, granted, used: used[type], remaining: granted - used[type] };
+  });
+}
+
+// 내가 요청한 받은 일수 (최근 것부터)
+export function getMyLeaveGrants() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return mockDb.leave_grants
+    .filter((g) => g.user_id === user.id)
+    .map((g) => ({ ...g }))
+    .sort((a, b) => b.requested_at.localeCompare(a.requested_at) || b.id.localeCompare(a.id));
+}
+
+// 병사가 받은 일수를 요청한다. 간부가 승인하기 전에는 남은 일수에 들어가지 않는다.
+// 결과: { ok: true, grant } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function requestLeaveGrant(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
+  const days = Number(input.days);
+  const reason = String(input.reason ?? '').trim();
+  const errors = {};
+  if (!LEAVE_TYPES.includes(input.leave_type)) errors.leave_type = '휴가 종류를 고르세요.';
+  if (!Number.isInteger(days) || days < 1 || days > MAX_GRANT_DAYS) {
+    errors.days = `일수는 1~${MAX_GRANT_DAYS} 사이의 숫자로 입력하세요.`;
+  }
+  if (!reason) {
+    errors.reason = '사유를 입력하세요.';
+  } else if (reason.length > MAX_REASON_LENGTH) {
+    errors.reason = `사유는 ${MAX_REASON_LENGTH}자 이하로 입력하세요.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const grant = {
+    id: nextId('g', mockDb.leave_grants),
+    user_id: user.id,
+    leave_type: input.leave_type,
+    days,
+    reason,
+    status: 'pending',
+    decided_by: null,
+    requested_at: new Date(now).toISOString(),
+    decided_at: null,
+  };
+  mockDb.leave_grants.push(grant);
+  return { ok: true, grant: { ...grant } };
+}
+
+// 간부만. 승인 대기 중인 요청 (먼저 요청한 것부터), 요청한 병사의 이름·보직 포함
+export function getPendingLeaveGrants() {
+  if (!requireOfficer()) return [];
+  return mockDb.leave_grants
+    .filter((g) => g.status === 'pending')
+    .map((g) => {
+      const p = mockDb.profiles.find((x) => x.id === g.user_id);
+      return { ...g, name: p?.name ?? '(알 수 없음)', position: p?.position ?? '' };
+    })
+    .sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
+}
+
+// 간부만. decision: 'approve' | 'reject'. 대기 중인 요청만 처리하고 변경 기록에 남긴다.
+export function decideLeaveGrant(id, decision, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  if (decision !== 'approve' && decision !== 'reject') return { ok: false, reason: 'invalid' };
+  const grant = mockDb.leave_grants.find((g) => g.id === id);
+  if (!grant) return { ok: false, reason: 'not_found' };
+  if (grant.status !== 'pending') return { ok: false, reason: 'already_decided' };
+
+  grant.status = decision === 'approve' ? 'approved' : 'rejected';
+  grant.decided_by = officer.id;
+  grant.decided_at = new Date(now).toISOString();
+  writeAuditLog(officer, decision === 'approve' ? 'approve_leave_grant' : 'reject_leave_grant', 'leave_grants', grant.id, now);
+  return { ok: true, grant: { ...grant } };
+}

@@ -10,6 +10,7 @@ import {
   reissueCode,
 } from './data.js';
 import { renderCalendar } from './calendar.js';
+import { renderLeaveSection } from './leave.js';
 
 // 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
 // 각 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
@@ -22,11 +23,6 @@ const TABS = {
   apply: {
     title: '신청',
     sections: [
-      {
-        heading: '휴가',
-        soldier: '휴가 종류별 남은 일수, 날짜별 남은 자리, 휴가·외박·외출 신청, 받은 일수 요청은 Phase 3에서 만듭니다.',
-        officer: '날짜별 출타 인원과 신청자 명단, 출타율 입력, 받은 휴가 일수 승인은 Phase 3에서 만듭니다.',
-      },
       {
         heading: '시설',
         all: '시설 목록, 날짜별 시간대 현황, 예약 신청, 내 예약은 Phase 4에서 만듭니다.',
@@ -96,6 +92,13 @@ function renderView(user) {
     calendar.className = 'calendar';
     renderCalendar(calendar, user);
     parts.push(calendar);
+  }
+  if (tab === 'apply') {
+    // 신청 탭 맨 위: 휴가 영역 (그 아래 시설 영역)
+    const leave = document.createElement('section');
+    leave.className = 'section leave-section';
+    renderLeaveSection(leave, user);
+    parts.push(leave);
   }
   view.replaceChildren(...parts, ...sections.map((spec) => renderSection(spec, user)));
 
