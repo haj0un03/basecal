@@ -236,13 +236,38 @@ body {
 
 .cal-title {
   flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 1.1rem;
   text-align: center;
 }
 
-.cal-nav-button,
-.cal-today-button {
+/* 달 이름 = 오늘로 돌아가는 버튼. ↺ 표시로 누를 수 있음을 알린다. */
+.cal-title-button {
+  min-height: 40px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cal-title-button::after {
+  content: " ↺";
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-weight: 400;
+}
+
+.cal-title-button:hover {
+  background: var(--bg);
+}
+
+.cal-nav-button {
   min-width: 44px;
   min-height: 40px;
   border: 1px solid var(--border);
@@ -261,12 +286,15 @@ body {
 /* 일정 종류 필터: 버튼 하나 + 아래로 펼쳐지는 체크 목록 (목록의 색 점이 색 안내를 겸함) */
 .cal-filter-bar {
   position: relative;
-  margin-bottom: 10px;
 }
 
 .filter-toggle {
-  min-height: 36px;
-  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 0 10px;
+  white-space: nowrap;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -286,7 +314,7 @@ body {
 .filter-panel {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -296,6 +324,22 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.filter-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 0.75rem;
+  line-height: 18px;
+  text-align: center;
+}
+
+.filter-caret {
+  font-size: 0.75em;
 }
 
 .filter-option {

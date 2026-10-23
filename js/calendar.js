@@ -124,9 +124,12 @@ export function renderCalendar(container, user, today = new Date()) {
   const next = el('button', 'cal-nav-button', '›');
   next.type = 'button';
   next.setAttribute('aria-label', '다음 달');
-  const title = el('h2', 'cal-title', `${year}년 ${month + 1}월`);
-  const todayButton = el('button', 'cal-today-button', '오늘');
+  // 달 이름을 누르면 이번 달·오늘로 돌아온다 (따로 "오늘" 버튼을 두지 않는다).
+  const title = el('h2', 'cal-title');
+  const todayButton = el('button', 'cal-title-button', `${year}년 ${month + 1}월`);
   todayButton.type = 'button';
+  todayButton.setAttribute('aria-label', `${year}년 ${month + 1}월, 누르면 오늘로 이동`);
+  title.append(todayButton);
   const moveMonth = (delta, focusSelector) => {
     const d = new Date(year, month + delta, 1);
     state.year = d.getFullYear();
@@ -146,14 +149,17 @@ export function renderCalendar(container, user, today = new Date()) {
     state.selected = todayISO;
     draw('[data-action="today"]');
   });
-  nav.append(prev, title, next, todayButton);
 
   // 일정 종류 필터: "필터" 버튼 하나를 누르면 아래로 체크 목록이 펼쳐진다.
   // 목록의 색 점이 색 안내(범례)를 겸한다. 체크를 바꿔도 목록은 열린 채로 달력만 바뀐다.
   const filterBar = el('div', 'cal-filter-bar');
   const hiddenTypes = state.hidden.size;
-  const toggle = el('button', 'filter-toggle', hiddenTypes ? `필터 · ${hiddenTypes}개 숨김 ▾` : '필터 ▾');
+  // 좁은 화면에 맞게 숨긴 종류 수는 작은 동그라미 숫자로 보여 준다.
+  const toggle = el('button', 'filter-toggle', '필터');
+  if (hiddenTypes) toggle.append(el('span', 'filter-count', String(hiddenTypes)));
+  toggle.append(el('span', 'filter-caret', '▾'));
   toggle.type = 'button';
+  toggle.setAttribute('aria-label', hiddenTypes ? `필터, ${hiddenTypes}개 종류 숨김` : '필터');
   toggle.dataset.action = 'filter';
   toggle.classList.toggle('active', hiddenTypes > 0);
   toggle.setAttribute('aria-expanded', String(state.filterOpen));
@@ -358,7 +364,9 @@ export function renderCalendar(container, user, today = new Date()) {
     dayList.append(el('p', 'cal-hidden-note', `필터로 숨긴 일정 ${hiddenCount}개`));
   }
 
-  container.replaceChildren(dday, nav, filterBar, grid, dayList);
+  // 달 넘기기 줄: ‹  달 이름  ›  필터
+  nav.append(prev, title, next, filterBar);
+  container.replaceChildren(dday, nav, grid, dayList);
 }
 
 // ── 개인 일정 추가·수정 창 ──────────────────────────────────
