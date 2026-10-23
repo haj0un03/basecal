@@ -22,6 +22,8 @@ function badgeText(e) {
 }
 // 한 주 줄에 보여 줄 막대 줄 수. 넘치면 날짜 칸에 +N으로 표시한다.
 const MAX_LANES = 2;
+// 필터 버튼 순서 (prd.md 4번의 일정 종류 7가지). 생일·기타는 "개인"에 들어간다.
+const FILTER_TYPES = ['personal', 'duty', 'unit', 'leave', 'overnight', 'outing', 'reservation'];
 
 // 보고 있는 달과 고른 날짜. 다른 사람이 들어오면 처음(오늘)으로 돌린다.
 let state = null;
@@ -71,7 +73,8 @@ function el(tag, className, text) {
 export function renderCalendar(container, user, today = new Date()) {
   const todayISO = toISODate(today);
   if (!state || state.userId !== user.id) {
-    state = { userId: user.id, year: today.getFullYear(), month: today.getMonth(), selected: todayISO };
+    // hidden: 필터로 끈 일정 종류
+    state = { userId: user.id, year: today.getFullYear(), month: today.getMonth(), selected: todayISO, hidden: new Set() };
   }
   const { year, month } = state;
   // 다시 그린 뒤에도 방금 누른 버튼에 초점을 둔다 (키보드로 쓰는 사람을 위해).
@@ -85,8 +88,11 @@ export function renderCalendar(container, user, today = new Date()) {
   const last = new Date(year, month + 1, 0);
   const firstISO = toISODate(first);
   const lastISO = toISODate(last);
-  const events = getCalendarEvents(firstISO, lastISO);
+  const allEvents = getCalendarEvents(firstISO, lastISO);
+  // 필터로 끈 종류는 달력 막대와 목록에서 모두 뺀다.
+  const events = allEvents.filter((e) => !state.hidden.has(e.type));
   const eventsOn = (iso) => events.filter((e) => e.start_date <= iso && iso <= e.end_date);
+  const hiddenOn = (iso) => allEvents.filter((e) => state.hidden.has(e.type) && e.start_date <= iso && iso <= e.end_date);
 
   // 전역 D-day
   const dday = el('p', 'dday');
@@ -123,6 +129,35 @@ export function renderCalendar(container, user, today = new Date()) {
     draw('[data-action="today"]');
   });
   nav.append(prev, title, next, todayButton);
+
+  // 일정 종류 필터. 색 안내(범례) 역할도 한다. 켜진 버튼은 ✓로도 표시한다.
+  const filters = el('div', 'cal-filters');
+  filters.setAttribute('role', 'group');
+  filters.setAttribute('aria-label', '보여 줄 일정 종류');
+  FILTER_TYPES.forEach((type) => {
+    const shown = !state.hidden.has(type);
+    const chip = el('button', `filter-chip type-${type}`);
+    chip.type = 'button';
+    chip.dataset.filter = type;
+    chip.setAttribute('aria-pressed', String(shown));
+    chip.append(el('span', 'filter-mark', shown ? '✓' : ''), el('span', 'filter-dot'), el('span', 'filter-label', TYPE_LABELS[type]));
+    chip.addEventListener('click', () => {
+      if (state.hidden.has(type)) state.hidden.delete(type);
+      else state.hidden.add(type);
+      draw(`[data-filter="${type}"]`);
+    });
+    filters.append(chip);
+  });
+  if (state.hidden.size > 0) {
+    const showAll = el('button', 'filter-reset', '모두 보기');
+    showAll.type = 'button';
+    showAll.dataset.action = 'show-all';
+    showAll.addEventListener('click', () => {
+      state.hidden.clear();
+      draw(`[data-filter="${FILTER_TYPES[0]}"]`);
+    });
+    filters.append(showAll);
+  }
 
   // 요일 줄 + 한 주에 한 줄. 여러 날 일정은 그 주 안에서 막대 하나로 잇는다.
   const grid = el('div', 'cal-grid');
@@ -246,6 +281,7 @@ export function renderCalendar(container, user, today = new Date()) {
   listHead.append(el('h3', '', formatDay(state.selected)), addButton);
   dayList.append(listHead);
   const selectedEvents = eventsOn(state.selected);
+  const hiddenCount = hiddenOn(state.selected).length;
   if (selectedEvents.length === 0) {
     dayList.append(el('p', 'cal-empty', '일정이 없습니다.'));
   } else {
@@ -279,8 +315,11 @@ export function renderCalendar(container, user, today = new Date()) {
     });
     dayList.append(list);
   }
+  if (hiddenCount > 0) {
+    dayList.append(el('p', 'cal-hidden-note', `필터로 숨긴 일정 ${hiddenCount}개`));
+  }
 
-  container.replaceChildren(dday, nav, grid, dayList);
+  container.replaceChildren(dday, nav, filters, grid, dayList);
 }
 
 // ── 개인 일정 추가·수정 창 ──────────────────────────────────

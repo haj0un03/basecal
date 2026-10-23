@@ -258,6 +258,80 @@ body {
   line-height: 1;
 }
 
+/* 일정 종류 필터 (색 안내 겸용) */
+.cal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+  padding: 0 8px 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 16px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filter-mark {
+  display: inline-block;
+  width: 0.9em;
+  text-align: center;
+}
+
+.filter-dot {
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.filter-label {
+  color: var(--text);
+}
+
+/* 끈 종류: 회색 테두리, 빈 점, ✓ 없음 */
+.filter-chip[aria-pressed="false"] {
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+.filter-chip[aria-pressed="false"] .filter-dot {
+  background: transparent;
+}
+
+.filter-chip[aria-pressed="false"] .filter-label {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.filter-reset {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cal-hidden-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 /* 달력 전체를 표 한 장처럼: 바깥 테두리 하나, 칸 사이는 가는 선 */
 .cal-grid {
   overflow: hidden;
