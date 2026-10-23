@@ -130,30 +130,149 @@ export function getDemoAccounts() {
 // ── 달력 일정 ──────────────────────────────────────────────
 // 내 달력에는 부대 일정(모두 같은 한 건을 함께 본다)과 내가 쓴 일정이 보인다.
 
-function toCalendarEvent(event) {
+// 개인 일정의 종류: 근무(duty), 생일(personal + 매년 반복), 기타(personal)
+// 생일은 항상 매년 반복한다 (가정, current_status.md 참고).
+const PERSONAL_KINDS = ['duty', 'birthday', 'other'];
+const MAX_TITLE_LENGTH = 30;
+const MAX_MEMO_LENGTH = 200;
+
+function kindOf(event) {
+  if (event.type === 'duty') return 'duty';
+  if (event.type === 'personal') return event.repeat_yearly ? 'birthday' : 'other';
+  return null;
+}
+
+function toCalendarEvent(event, user, occurrence = null) {
   const isTraining = event.type === 'unit' && event.unit_category === 'training';
   return {
     id: event.id,
     type: event.type,
+    kind: kindOf(event),
     // 훈련은 제목과 설명 없이 "훈련"으로만 보여 준다.
     title: isTraining ? '훈련' : event.title,
     memo: isTraining ? '' : event.memo,
-    start_date: event.start_date,
-    end_date: event.end_date,
+    start_date: occurrence ?? event.start_date,
+    end_date: occurrence ?? event.end_date,
     time: event.time,
     unit_category: event.unit_category,
+    repeat_yearly: event.repeat_yearly,
+    // 원래 등록한 날짜 (매년 반복 일정을 고칠 때 쓴다)
+    original_start_date: event.start_date,
+    editable: kindOf(event) !== null && event.author_id === user.id,
   };
 }
 
+// 매년 반복 일정이 start~end 사이에 오는 날짜들. 2월 29일은 윤년이 아니면 2월 28일에 보여 준다.
+function yearlyOccurrences(event, start, end) {
+  const [firstYear, month, day] = event.start_date.split('-').map(Number);
+  const dates = [];
+  for (let year = Number(start.slice(0, 4)); year <= Number(end.slice(0, 4)); year += 1) {
+    if (year < firstYear) continue;
+    const lastDay = new Date(year, month, 0).getDate();
+    const iso = `${year}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+    if (iso >= start && iso <= end) dates.push(iso);
+  }
+  return dates;
+}
+
 // start, end: 'YYYY-MM-DD'. 그 기간에 하루라도 걸치는 일정을 돌려준다.
+// 부대 일정은 모두에게, 개인 일정(근무·생일·기타)은 쓴 사람에게만 보인다.
 export function getCalendarEvents(start, end) {
   const user = getCurrentUser();
   if (!user) return [];
-  return mockDb.events
+  const result = [];
+  mockDb.events
     .filter((e) => e.type === 'unit' || e.author_id === user.id)
-    .filter((e) => e.start_date <= end && e.end_date >= start)
-    .map(toCalendarEvent)
-    .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+    .forEach((e) => {
+      if (e.repeat_yearly) {
+        yearlyOccurrences(e, start, end).forEach((date) => result.push(toCalendarEvent(e, user, date)));
+      } else if (e.start_date <= end && e.end_date >= start) {
+        result.push(toCalendarEvent(e, user));
+      }
+    });
+  return result.sort(
+    (a, b) =>
+      a.start_date.localeCompare(b.start_date) ||
+      (a.time ?? '').localeCompare(b.time ?? '') ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+function validatePersonalEvent(input) {
+  const kind = input.kind;
+  const title = String(input.title ?? '').trim();
+  const memo = String(input.memo ?? '').trim();
+  const time = String(input.time ?? '').trim();
+  const startDate = input.start_date;
+  // 생일은 하루짜리다.
+  const endDate = kind === 'birthday' ? startDate : input.end_date || startDate;
+  const errors = {};
+
+  if (!PERSONAL_KINDS.includes(kind)) errors.kind = '종류를 고르세요.';
+  if (!title) {
+    errors.title = '제목을 입력하세요.';
+  } else if (title.length > MAX_TITLE_LENGTH) {
+    errors.title = `제목은 ${MAX_TITLE_LENGTH}자 이하로 입력하세요.`;
+  }
+  if (!isDate(startDate)) {
+    errors.start_date = '날짜를 입력하세요.';
+  } else if (!isDate(endDate)) {
+    errors.end_date = '끝나는 날짜를 확인하세요.';
+  } else if (endDate < startDate) {
+    errors.end_date = '끝나는 날짜는 시작 날짜와 같거나 뒤여야 합니다.';
+  }
+  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) errors.time = '시간을 확인하세요.';
+  if (memo.length > MAX_MEMO_LENGTH) errors.memo = `메모는 ${MAX_MEMO_LENGTH}자 이하로 입력하세요.`;
+
+  const fields = {
+    type: kind === 'duty' ? 'duty' : 'personal',
+    title,
+    start_date: startDate,
+    end_date: endDate,
+    time: time || null,
+    memo,
+    repeat_yearly: kind === 'birthday',
+  };
+  return { errors, fields };
+}
+
+function findOwnPersonalEvent(id, user) {
+  return mockDb.events.find((e) => e.id === id && kindOf(e) !== null && e.author_id === user.id);
+}
+
+// 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found', errors }
+export function addPersonalEvent(input) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const { errors, fields } = validatePersonalEvent(input);
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const event = { id: nextId('e', mockDb.events), ...fields, author_id: user.id, unit_category: null };
+  mockDb.events.push(event);
+  return { ok: true, event: toCalendarEvent(event, user) };
+}
+
+// 본인이 쓴 개인 일정만 고칠 수 있다.
+export function updatePersonalEvent(id, input) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const event = findOwnPersonalEvent(id, user);
+  if (!event) return { ok: false, reason: 'not_found' };
+  const { errors, fields } = validatePersonalEvent(input);
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  Object.assign(event, fields);
+  return { ok: true, event: toCalendarEvent(event, user) };
+}
+
+// 본인이 쓴 개인 일정만 지울 수 있다.
+export function deletePersonalEvent(id) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const event = findOwnPersonalEvent(id, user);
+  if (!event) return { ok: false, reason: 'not_found' };
+  mockDb.events.splice(mockDb.events.indexOf(event), 1);
+  return { ok: true };
 }
 
 // ── 간부: 인원 추가와 코드 발급 ─────────────────────────────
