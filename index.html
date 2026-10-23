@@ -9,9 +9,10 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <span class="app-title">부대 달력</span>
+      <!-- 들어오기 전에는 앱 이름, 들어온 뒤에는 현재 사용자의 이름·보직·역할 -->
+      <div id="topbar-title" class="topbar-title"><span class="app-title">부대 달력</span></div>
       <div class="user-area">
-        <button type="button" id="user-button" class="user-button" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu"></button>
+        <button type="button" id="user-button" class="user-button" aria-label="사용자 메뉴" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu">⋮</button>
         <div id="user-menu" class="user-menu" hidden></div>
       </div>
     </div>

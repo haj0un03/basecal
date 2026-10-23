@@ -43,6 +43,7 @@ const ROLE_LABELS = { soldier: '병사', officer: '간부' };
 
 const view = document.getElementById('view');
 const userButton = document.getElementById('user-button');
+const topbarTitle = document.getElementById('topbar-title');
 const userMenu = document.getElementById('user-menu');
 const memberDialog = document.getElementById('member-dialog');
 
@@ -359,7 +360,14 @@ function menuButton(label, onClick) {
 }
 
 function renderUser(user) {
-  userButton.textContent = `${user.name} ▾`;
+  // 화면 위 왼쪽: 현재 사용자 (앱 이름 자리). 오른쪽 ⋮ 버튼이 사용자 메뉴를 연다.
+  const topName = document.createElement('span');
+  topName.className = 'topbar-name';
+  topName.textContent = user.name;
+  const topSub = document.createElement('span');
+  topSub.className = 'topbar-sub';
+  topSub.textContent = `${user.position} · ${ROLE_LABELS[user.role]}`;
+  topbarTitle.replaceChildren(topName, topSub);
 
   const info = document.createElement('div');
   info.className = 'user-menu-info';
@@ -392,6 +400,11 @@ function render() {
   setMenuOpen(false);
   document.body.classList.toggle('signed-out', !user);
   if (!user) {
+    // 들어오기 전에는 앱 이름을 보여 준다.
+    const appTitle = document.createElement('span');
+    appTitle.className = 'app-title';
+    appTitle.textContent = '부대 달력';
+    topbarTitle.replaceChildren(appTitle);
     renderSignIn();
     return;
   }
