@@ -30,6 +30,17 @@ let state = null;
 // 일정 창에서 저장·삭제한 뒤 달력을 다시 그릴 때 쓴다.
 let redraw = () => {};
 
+// 필터 목록은 바깥을 누르거나 Esc를 누르면 닫는다.
+function closeFilter(focusToggle) {
+  if (!state?.filterOpen) return;
+  state.filterOpen = false;
+  redraw(focusToggle ? '[data-action="filter"]' : undefined);
+}
+document.addEventListener('click', () => closeFilter(false));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeFilter(true);
+});
+
 export function toISODate(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -73,8 +84,15 @@ function el(tag, className, text) {
 export function renderCalendar(container, user, today = new Date()) {
   const todayISO = toISODate(today);
   if (!state || state.userId !== user.id) {
-    // hidden: 필터로 끈 일정 종류
-    state = { userId: user.id, year: today.getFullYear(), month: today.getMonth(), selected: todayISO, hidden: new Set() };
+    // hidden: 필터로 끈 일정 종류, filterOpen: 필터 목록이 펼쳐져 있는지
+    state = {
+      userId: user.id,
+      year: today.getFullYear(),
+      month: today.getMonth(),
+      selected: todayISO,
+      hidden: new Set(),
+      filterOpen: false,
+    };
   }
   const { year, month } = state;
   // 다시 그린 뒤에도 방금 누른 버튼에 초점을 둔다 (키보드로 쓰는 사람을 위해).
@@ -130,33 +148,54 @@ export function renderCalendar(container, user, today = new Date()) {
   });
   nav.append(prev, title, next, todayButton);
 
-  // 일정 종류 필터. 색 안내(범례) 역할도 한다. 켜진 버튼은 ✓로도 표시한다.
-  const filters = el('div', 'cal-filters');
-  filters.setAttribute('role', 'group');
-  filters.setAttribute('aria-label', '보여 줄 일정 종류');
-  FILTER_TYPES.forEach((type) => {
-    const shown = !state.hidden.has(type);
-    const chip = el('button', `filter-chip type-${type}`);
-    chip.type = 'button';
-    chip.dataset.filter = type;
-    chip.setAttribute('aria-pressed', String(shown));
-    chip.append(el('span', 'filter-mark', shown ? '✓' : ''), el('span', 'filter-dot'), el('span', 'filter-label', TYPE_LABELS[type]));
-    chip.addEventListener('click', () => {
-      if (state.hidden.has(type)) state.hidden.delete(type);
-      else state.hidden.add(type);
-      draw(`[data-filter="${type}"]`);
-    });
-    filters.append(chip);
+  // 일정 종류 필터: "필터" 버튼 하나를 누르면 아래로 체크 목록이 펼쳐진다.
+  // 목록의 색 점이 색 안내(범례)를 겸한다. 체크를 바꿔도 목록은 열린 채로 달력만 바뀐다.
+  const filterBar = el('div', 'cal-filter-bar');
+  const hiddenTypes = state.hidden.size;
+  const toggle = el('button', 'filter-toggle', hiddenTypes ? `필터 · ${hiddenTypes}개 숨김 ▾` : '필터 ▾');
+  toggle.type = 'button';
+  toggle.dataset.action = 'filter';
+  toggle.classList.toggle('active', hiddenTypes > 0);
+  toggle.setAttribute('aria-expanded', String(state.filterOpen));
+  toggle.setAttribute('aria-controls', 'cal-filter-panel');
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.filterOpen = !state.filterOpen;
+    draw('[data-action="filter"]');
   });
-  if (state.hidden.size > 0) {
-    const showAll = el('button', 'filter-reset', '모두 보기');
+  filterBar.append(toggle);
+
+  if (state.filterOpen) {
+    const panel = el('div', 'filter-panel');
+    panel.id = 'cal-filter-panel';
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-label', '보여 줄 일정 종류');
+    // 목록 안을 눌러도 바깥 누르기로 처리되어 닫히지 않게 한다.
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    FILTER_TYPES.forEach((type) => {
+      const option = el('label', `filter-option type-${type}`);
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !state.hidden.has(type);
+      box.dataset.filter = type;
+      box.addEventListener('change', () => {
+        if (box.checked) state.hidden.delete(type);
+        else state.hidden.add(type);
+        draw(`[data-filter="${type}"]`);
+      });
+      option.append(box, el('span', 'filter-dot'), el('span', 'filter-label', TYPE_LABELS[type]));
+      panel.append(option);
+    });
+    const showAll = el('button', 'small-button filter-show-all', '모두 보기');
     showAll.type = 'button';
     showAll.dataset.action = 'show-all';
+    showAll.disabled = hiddenTypes === 0;
     showAll.addEventListener('click', () => {
       state.hidden.clear();
       draw(`[data-filter="${FILTER_TYPES[0]}"]`);
     });
-    filters.append(showAll);
+    panel.append(showAll);
+    filterBar.append(panel);
   }
 
   // 요일 줄 + 한 주에 한 줄. 여러 날 일정은 그 주 안에서 막대 하나로 잇는다.
@@ -319,7 +358,7 @@ export function renderCalendar(container, user, today = new Date()) {
     dayList.append(el('p', 'cal-hidden-note', `필터로 숨긴 일정 ${hiddenCount}개`));
   }
 
-  container.replaceChildren(dday, nav, filters, grid, dayList);
+  container.replaceChildren(dday, nav, filterBar, grid, dayList);
 }
 
 // ── 개인 일정 추가·수정 창 ──────────────────────────────────
