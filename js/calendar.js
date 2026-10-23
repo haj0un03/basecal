@@ -152,6 +152,7 @@ export function renderCalendar(container, user, today = new Date()) {
       if (!iso) {
         const blank = el('div', 'cal-blank');
         blank.style.gridColumn = String(col + 1);
+        if (col === 6) blank.classList.add('last-col');
         week.append(blank);
         return;
       }
@@ -213,7 +214,7 @@ export function renderCalendar(container, user, today = new Date()) {
     cell.dataset.date = iso;
     cell.style.gridColumn = String(col + 1);
     if (col === 0) cell.classList.add('sun');
-    if (col === 6) cell.classList.add('sat');
+    if (col === 6) cell.classList.add('sat', 'last-col');
     if (iso === todayISO) {
       cell.classList.add('today');
       cell.setAttribute('aria-current', 'date');

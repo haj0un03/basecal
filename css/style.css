@@ -258,16 +258,19 @@ body {
   line-height: 1;
 }
 
+/* 달력 전체를 표 한 장처럼: 바깥 테두리 하나, 칸 사이는 가는 선 */
 .cal-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
 }
 
 .cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  column-gap: 2px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 
 /* 한 주 = 날짜 칸 7개 위에 일정 막대를 겹쳐 놓는 줄.
@@ -276,11 +279,21 @@ body {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-template-rows: 24px 18px 18px 14px;
-  column-gap: 2px;
+}
+
+.cal-week + .cal-week {
+  border-top: 1px solid var(--border);
 }
 
 .cal-blank {
   grid-row: 1 / -1;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.cal-day.last-col,
+.cal-blank.last-col {
+  border-right: 0;
 }
 
 .cal-weekday {
@@ -299,13 +312,19 @@ body {
   grid-row: 1 / -1;
   min-width: 0;
   padding: 4px 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.cal-day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .cal-num {
@@ -335,9 +354,10 @@ body {
   text-align: center;
 }
 
+/* 고른 날: 칸 배경을 연한 초록으로 */
 .cal-day.selected {
-  border: 2px solid var(--accent);
-  padding: 3px 1px;
+  background: #e6f0ec;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
 /* 일정 막대: 여러 날이면 이어서 하나로, 글자는 가운데에 한 번.
