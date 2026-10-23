@@ -304,7 +304,7 @@ body {
   cursor: pointer;
 }
 
-/* 꺼 둔 종류가 있으면 버튼을 강조한다 (글자로도 "N개 숨김" 표시) */
+/* 꺼 둔 종류가 있으면 버튼을 초록으로 강조한다 */
 .filter-toggle.active {
   border-color: var(--accent);
   color: var(--accent);
@@ -324,18 +324,6 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-}
-
-.filter-count {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 0.75rem;
-  line-height: 18px;
-  text-align: center;
 }
 
 .filter-caret {

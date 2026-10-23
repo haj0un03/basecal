@@ -154,9 +154,8 @@ export function renderCalendar(container, user, today = new Date()) {
   // 목록의 색 점이 색 안내(범례)를 겸한다. 체크를 바꿔도 목록은 열린 채로 달력만 바뀐다.
   const filterBar = el('div', 'cal-filter-bar');
   const hiddenTypes = state.hidden.size;
-  // 좁은 화면에 맞게 숨긴 종류 수는 작은 동그라미 숫자로 보여 준다.
+  // 꺼 둔 종류가 있으면 숫자 없이 버튼 색만 강조한다 (읽어주기에는 숨긴 수를 넣는다).
   const toggle = el('button', 'filter-toggle', '필터');
-  if (hiddenTypes) toggle.append(el('span', 'filter-count', String(hiddenTypes)));
   toggle.append(el('span', 'filter-caret', '▾'));
   toggle.type = 'button';
   toggle.setAttribute('aria-label', hiddenTypes ? `필터, ${hiddenTypes}개 종류 숨김` : '필터');
