@@ -360,13 +360,13 @@ function menuButton(label, onClick) {
 }
 
 function renderUser(user) {
-  // 화면 위 왼쪽: 현재 사용자 (앱 이름 자리). 오른쪽 ⋮ 버튼이 사용자 메뉴를 연다.
+  // 화면 위 왼쪽: 현재 사용자의 이름과 보직 (앱 이름 자리). 오른쪽 ⋮ 버튼이 사용자 메뉴를 연다.
   const topName = document.createElement('span');
   topName.className = 'topbar-name';
   topName.textContent = user.name;
   const topSub = document.createElement('span');
   topSub.className = 'topbar-sub';
-  topSub.textContent = `${user.position} · ${ROLE_LABELS[user.role]}`;
+  topSub.textContent = user.position;
   topbarTitle.replaceChildren(topName, topSub);
 
   const info = document.createElement('div');
