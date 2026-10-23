@@ -20,7 +20,8 @@ const KIND_LABELS = { duty: '근무', birthday: '생일', other: '개인' };
 function badgeText(e) {
   return (e.kind && KIND_LABELS[e.kind]) || TYPE_LABELS[e.type] || e.type;
 }
-const MAX_CHIPS = 2;
+// 한 주 줄에 보여 줄 막대 줄 수. 넘치면 날짜 칸에 +N으로 표시한다.
+const MAX_LANES = 2;
 
 // 보고 있는 달과 고른 날짜. 다른 사람이 들어오면 처음(오늘)으로 돌린다.
 let state = null;
@@ -123,30 +124,96 @@ export function renderCalendar(container, user, today = new Date()) {
   });
   nav.append(prev, title, next, todayButton);
 
-  // 요일 줄
+  // 요일 줄 + 한 주에 한 줄. 여러 날 일정은 그 주 안에서 막대 하나로 잇는다.
   const grid = el('div', 'cal-grid');
+  const weekdays = el('div', 'cal-weekdays');
   WEEKDAYS.forEach((name, i) => {
     const head = el('div', 'cal-weekday', name);
     if (i === 0) head.classList.add('sun');
     if (i === 6) head.classList.add('sat');
-    grid.append(head);
+    weekdays.append(head);
   });
+  grid.append(weekdays);
 
-  // 1일 앞의 빈칸
-  for (let i = 0; i < first.getDay(); i += 1) {
-    grid.append(el('div', 'cal-blank'));
+  const lastDay = last.getDate();
+  const offset = first.getDay();
+  const weekCount = Math.ceil((offset + lastDay) / 7);
+
+  for (let w = 0; w < weekCount; w += 1) {
+    const week = el('div', 'cal-week');
+    // 이 줄의 7칸 날짜. 이번 달이 아닌 칸은 null.
+    const days = [];
+    for (let col = 0; col < 7; col += 1) {
+      const day = w * 7 + col - offset + 1;
+      days.push(day >= 1 && day <= lastDay ? toISODate(new Date(year, month, day)) : null);
+    }
+
+    days.forEach((iso, col) => {
+      if (!iso) {
+        const blank = el('div', 'cal-blank');
+        blank.style.gridColumn = String(col + 1);
+        week.append(blank);
+        return;
+      }
+      week.append(dayCell(iso, col));
+    });
+
+    // 이 주에 걸치는 일정을 막대로 놓는다. 먼저 시작하고 긴 일정부터 윗줄에 둔다.
+    const inMonth = days.filter(Boolean);
+    const weekStart = inMonth[0];
+    const weekEnd = inMonth[inMonth.length - 1];
+    const segments = events
+      .filter((e) => e.start_date <= weekEnd && e.end_date >= weekStart)
+      .map((e) => {
+        const from = e.start_date > weekStart ? e.start_date : weekStart;
+        const to = e.end_date < weekEnd ? e.end_date : weekEnd;
+        return { e, from, to, fromCol: days.indexOf(from), toCol: days.indexOf(to) };
+      })
+      .sort((a, b) => a.fromCol - b.fromCol || b.toCol - b.fromCol - (a.toCol - a.fromCol));
+
+    // 줄마다 마지막으로 차지한 칸. 막대 하나는 끝날 때까지 같은 줄을 쓴다.
+    const laneEnds = [];
+    const hiddenCount = new Array(7).fill(0);
+    segments.forEach(({ e, from, to, fromCol, toCol }) => {
+      let lane = laneEnds.findIndex((end) => end < fromCol);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = toCol;
+      if (lane >= MAX_LANES) {
+        for (let col = fromCol; col <= toCol; col += 1) hiddenCount[col] += 1;
+        return;
+      }
+      const bar = el('div', `cal-bar type-${e.type}`, e.title);
+      bar.style.gridColumn = `${fromCol + 1} / ${toCol + 2}`;
+      bar.style.gridRow = String(lane + 2);
+      bar.dataset.id = e.id;
+      bar.dataset.start = from;
+      bar.dataset.end = to;
+      // 이전 주(또는 이전 달)에서 이어지거나 다음으로 이어지면 그쪽 모서리를 각지게 한다.
+      if (e.start_date < from) bar.classList.add('cont-left');
+      if (e.end_date > to) bar.classList.add('cont-right');
+      bar.setAttribute('aria-hidden', 'true');
+      week.append(bar);
+    });
+
+    hiddenCount.forEach((count, col) => {
+      if (count === 0) return;
+      const more = el('span', 'cal-more', `+${count}`);
+      more.style.gridColumn = String(col + 1);
+      more.setAttribute('aria-hidden', 'true');
+      week.append(more);
+    });
+
+    grid.append(week);
   }
 
-  for (let day = 1; day <= last.getDate(); day += 1) {
-    const date = new Date(year, month, day);
-    const iso = toISODate(date);
+  function dayCell(iso, col) {
     const dayEvents = eventsOn(iso);
-
     const cell = el('button', 'cal-day');
     cell.type = 'button';
     cell.dataset.date = iso;
-    if (date.getDay() === 0) cell.classList.add('sun');
-    if (date.getDay() === 6) cell.classList.add('sat');
+    cell.style.gridColumn = String(col + 1);
+    if (col === 0) cell.classList.add('sun');
+    if (col === 6) cell.classList.add('sat');
     if (iso === todayISO) {
       cell.classList.add('today');
       cell.setAttribute('aria-current', 'date');
@@ -154,21 +221,17 @@ export function renderCalendar(container, user, today = new Date()) {
     const selected = iso === state.selected;
     cell.classList.toggle('selected', selected);
     cell.setAttribute('aria-pressed', String(selected));
-    cell.setAttribute('aria-label', `${formatDay(iso)}${iso === todayISO ? ', 오늘' : ''}, 일정 ${dayEvents.length}개`);
-
-    cell.append(el('span', 'cal-num', String(day)));
-    dayEvents.slice(0, MAX_CHIPS).forEach((e) => {
-      cell.append(el('span', `cal-chip type-${e.type}`, e.title));
-    });
-    if (dayEvents.length > MAX_CHIPS) {
-      cell.append(el('span', 'cal-more', `+${dayEvents.length - MAX_CHIPS}`));
-    }
-
+    const titles = dayEvents.map((e) => e.title).join(', ');
+    cell.setAttribute(
+      'aria-label',
+      `${formatDay(iso)}${iso === todayISO ? ', 오늘' : ''}, 일정 ${dayEvents.length}개${titles ? `: ${titles}` : ''}`,
+    );
+    cell.append(el('span', 'cal-num', String(Number(iso.slice(8)))));
     cell.addEventListener('click', () => {
       state.selected = iso;
       draw(`[data-date="${iso}"]`);
     });
-    grid.append(cell);
+    return cell;
   }
 
   // 고른 날의 일정 목록
