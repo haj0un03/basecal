@@ -1,6 +1,7 @@
 // 데이터 계층. 화면 코드는 가상 데이터를 직접 읽지 않고 이 파일의 함수만 쓴다.
 // Phase 5에서 이 파일 안쪽만 Supabase로 바꿔 끼운다.
 import { mockDb, mockAuth } from './mock-data.js';
+import { MERIT_POINTS_PER_REWARD_DAY, MAX_POINTS_PER_ENTRY } from './settings.js';
 
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 10;
@@ -476,6 +477,8 @@ export function reissueCode(userId, now = Date.now()) {
 // 남은 일수는 저장하지 않고 매번 계산한다: 간부가 승인한 받은 일수 − 신청된 휴가의 사용 일수 합계.
 
 export const LEAVE_TYPES = ['annual', 'reward', 'consolation'];
+// 병사가 직접 요청할 수 있는 종류. 연가는 요청 대상이 아니다 (2026-10-23 사용자 결정).
+const REQUESTABLE_LEAVE_TYPES = ['reward', 'consolation'];
 const MAX_GRANT_DAYS = 30;
 const MAX_REASON_LENGTH = 100;
 
@@ -518,7 +521,7 @@ export function getMyLeaveGrants() {
     .sort((a, b) => b.requested_at.localeCompare(a.requested_at) || b.id.localeCompare(a.id));
 }
 
-// 병사가 받은 일수를 요청한다. 간부가 승인하기 전에는 남은 일수에 들어가지 않는다.
+// 병사가 받은 일수(포상휴가·위로휴가)를 요청한다. 간부가 승인하기 전에는 남은 일수에 들어가지 않는다.
 // 결과: { ok: true, grant } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
 export function requestLeaveGrant(input, now = Date.now()) {
   const user = getCurrentUser();
@@ -526,7 +529,7 @@ export function requestLeaveGrant(input, now = Date.now()) {
   const days = Number(input.days);
   const reason = String(input.reason ?? '').trim();
   const errors = {};
-  if (!LEAVE_TYPES.includes(input.leave_type)) errors.leave_type = '휴가 종류를 고르세요.';
+  if (!REQUESTABLE_LEAVE_TYPES.includes(input.leave_type)) errors.leave_type = '포상휴가나 위로휴가를 고르세요.';
   if (!Number.isInteger(days) || days < 1 || days > MAX_GRANT_DAYS) {
     errors.days = `일수는 1~${MAX_GRANT_DAYS} 사이의 숫자로 입력하세요.`;
   }
@@ -547,6 +550,8 @@ export function requestLeaveGrant(input, now = Date.now()) {
     decided_by: null,
     requested_at: new Date(now).toISOString(),
     decided_at: null,
+    source: 'request',
+    merit_cost: 0,
   };
   mockDb.leave_grants.push(grant);
   return { ok: true, grant: { ...grant } };
@@ -559,7 +564,7 @@ export function getPendingLeaveGrants() {
     .filter((g) => g.status === 'pending')
     .map((g) => {
       const p = mockDb.profiles.find((x) => x.id === g.user_id);
-      return { ...g, name: p?.name ?? '(알 수 없음)', position: p?.position ?? '' };
+      return { ...g, name: p?.name ?? '(알 수 없음)', position: p?.position ?? '', merit_balance: meritBalance(g.user_id) };
     })
     .sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
 }
@@ -573,9 +578,141 @@ export function decideLeaveGrant(id, decision, now = Date.now()) {
   if (!grant) return { ok: false, reason: 'not_found' };
   if (grant.status !== 'pending') return { ok: false, reason: 'already_decided' };
 
+  // 상점 전환은 승인하는 순간 상점을 뺀다. 그사이 벌점 등으로 상점이 모자라면 승인할 수 없다.
+  const isConversion = grant.source === 'merit';
+  if (decision === 'approve' && isConversion && meritBalance(grant.user_id) < grant.merit_cost) {
+    return { ok: false, reason: 'not_enough_merit', balance: meritBalance(grant.user_id) };
+  }
+
   grant.status = decision === 'approve' ? 'approved' : 'rejected';
+  if (decision === 'approve' && isConversion) {
+    mockDb.merit_points.push({
+      id: nextId('m', mockDb.merit_points),
+      user_id: grant.user_id,
+      kind: 'conversion',
+      points: -grant.merit_cost,
+      reason: `포상휴가 ${grant.days}일로 전환`,
+      given_by: officer.id,
+      grant_id: grant.id,
+      created_at: new Date(now).toISOString(),
+    });
+  }
   grant.decided_by = officer.id;
   grant.decided_at = new Date(now).toISOString();
   writeAuditLog(officer, decision === 'approve' ? 'approve_leave_grant' : 'reject_leave_grant', 'leave_grants', grant.id, now);
+  return { ok: true, grant: { ...grant } };
+}
+
+// ── 상점·벌점 ──────────────────────────────────────────────
+// 간부가 병사를 골라 사유와 함께 상점(+) 또는 벌점(-)을 준다. 병사가 요청하지 않는다.
+// 남은 상점은 저장하지 않고 merit_points의 합계로 매번 계산한다.
+// 상점을 포상휴가로 바꾸려면 병사가 요청하고 간부가 승인한다. 승인할 때 상점이 빠진다.
+// 벌점으로 상점이 마이너스가 될 수 있다 (임시. prd.md 11번 확인 항목).
+
+function meritBalance(userId) {
+  return mockDb.merit_points.filter((m) => m.user_id === userId).reduce((sum, m) => sum + m.points, 0);
+}
+
+// 아직 처리되지 않은 전환 요청에 걸려 있는 상점 (같은 상점을 두 번 쓰지 못하게)
+function pendingConversionCost(userId) {
+  return mockDb.leave_grants
+    .filter((g) => g.user_id === userId && g.source === 'merit' && g.status === 'pending')
+    .reduce((sum, g) => sum + g.merit_cost, 0);
+}
+
+// 병사만. 결과: { balance, reserved, available, pointsPerDay, history: [...] }
+export function getMyMeritSummary() {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return null;
+  const balance = meritBalance(user.id);
+  const reserved = pendingConversionCost(user.id);
+  const history = mockDb.merit_points
+    .filter((m) => m.user_id === user.id)
+    .map((m) => ({ ...m, given_by_name: mockDb.profiles.find((p) => p.id === m.given_by)?.name ?? '' }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  return {
+    balance,
+    reserved,
+    available: balance - reserved,
+    pointsPerDay: MERIT_POINTS_PER_REWARD_DAY,
+    history,
+  };
+}
+
+// 간부가 상점·벌점을 줄 대상: 활성 병사 (이름 순)
+export function getSoldiers() {
+  if (!requireOfficer()) return [];
+  return mockDb.profiles
+    .filter((p) => p.is_active && p.role === 'soldier')
+    .map((p) => ({ id: p.id, name: p.name, position: p.position, balance: meritBalance(p.id) }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.position.localeCompare(b.position, 'ko'));
+}
+
+// 간부만. input: { user_id, kind: 'merit' | 'demerit', points, reason }
+// 결과: { ok: true, entry, balance } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function givePoints(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const target = mockDb.profiles.find((p) => p.id === input.user_id && p.is_active && p.role === 'soldier');
+  const points = Number(input.points);
+  const reason = String(input.reason ?? '').trim();
+  const errors = {};
+  if (!target) errors.user_id = '병사를 고르세요.';
+  if (input.kind !== 'merit' && input.kind !== 'demerit') errors.kind = '상점인지 벌점인지 고르세요.';
+  if (!Number.isInteger(points) || points < 1 || points > MAX_POINTS_PER_ENTRY) {
+    errors.points = `점수는 1~${MAX_POINTS_PER_ENTRY} 사이의 숫자로 입력하세요.`;
+  }
+  if (!reason) {
+    errors.reason = '사유를 입력하세요.';
+  } else if (reason.length > MAX_REASON_LENGTH) {
+    errors.reason = `사유는 ${MAX_REASON_LENGTH}자 이하로 입력하세요.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const entry = {
+    id: nextId('m', mockDb.merit_points),
+    user_id: target.id,
+    kind: input.kind,
+    points: input.kind === 'merit' ? points : -points,
+    reason,
+    given_by: officer.id,
+    grant_id: null,
+    created_at: new Date(now).toISOString(),
+  };
+  mockDb.merit_points.push(entry);
+  writeAuditLog(officer, input.kind === 'merit' ? 'give_merit' : 'give_demerit', 'merit_points', entry.id, now);
+  return { ok: true, entry: { ...entry }, balance: meritBalance(target.id) };
+}
+
+// 병사만. 상점을 포상휴가 days일로 바꿔 달라고 요청한다 (간부 승인 대기).
+// 결과: { ok: true, grant } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function requestMeritConversion(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
+  const days = Number(input.days);
+  const cost = days * MERIT_POINTS_PER_REWARD_DAY;
+  const available = meritBalance(user.id) - pendingConversionCost(user.id);
+  const errors = {};
+  if (!Number.isInteger(days) || days < 1) {
+    errors.days = '바꿀 일수를 1 이상의 숫자로 입력하세요.';
+  } else if (cost > available) {
+    errors.days = `상점이 모자랍니다. ${days}일에는 ${cost}점이 필요하고, 지금 쓸 수 있는 상점은 ${available}점입니다.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const grant = {
+    id: nextId('g', mockDb.leave_grants),
+    user_id: user.id,
+    leave_type: 'reward',
+    days,
+    reason: `상점 ${cost}점 전환`,
+    status: 'pending',
+    decided_by: null,
+    requested_at: new Date(now).toISOString(),
+    decided_at: null,
+    source: 'merit',
+    merit_cost: cost,
+  };
+  mockDb.leave_grants.push(grant);
   return { ok: true, grant: { ...grant } };
 }

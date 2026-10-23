@@ -241,6 +241,7 @@ body {
   --type-overnight: #0f8b8d;
   --type-outing: #8a7a00;
   --type-reservation: #b0466f;
+  --merit: #9a6700;
   --sun: #c62828;
   --sat: #1e5fae;
 }
@@ -668,8 +669,8 @@ body {
 
 .leave-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
   margin-bottom: 12px;
 }
 
@@ -687,14 +688,56 @@ body {
 
 .leave-card-type {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
   font-weight: 600;
 }
 
 .leave-card-remaining {
   color: var(--type-leave);
-  font-size: 1.4rem;
+  font-size: 1.3rem;
 }
+
+/* 상점 카드 */
+.leave-merit .leave-card-remaining {
+  color: var(--merit);
+}
+
+.leave-card-remaining.negative {
+  color: #a12222;
+}
+
+.leave-sub-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.small-button.merit-button {
+  border-color: var(--merit);
+  color: var(--merit);
+  font-weight: 600;
+}
+
+.grant-error {
+  flex-basis: 100%;
+  color: #a12222;
+  font-size: 0.85rem;
+}
+
+/* 상점·벌점 내역: 색과 글자(상점 +5, 벌점 -2)를 함께 */
+.merit-badge {
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.merit-badge.merit-merit { color: var(--merit); }
+.merit-badge.merit-demerit { color: #a12222; }
+.merit-badge.merit-conversion { color: var(--text-muted); }
 
 .leave-card-detail {
   color: var(--text-muted);

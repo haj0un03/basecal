@@ -13,6 +13,8 @@
 // - leave_grants: 받은 휴가 일수. leave_type: annual(연가), reward(포상휴가), consolation(위로휴가)
 //   status: pending(대기), approved(승인), rejected(반려). 승인된 것만 남은 일수에 들어간다.
 //   일수는 모두 가상 값이다.
+// - merit_points: 상점·벌점. kind: merit(상점, +점수), demerit(벌점, -점수), conversion(포상휴가 전환, -점수)
+//   남은 상점 = points 합계 (저장하지 않고 매번 계산). 점수는 모두 가상 값이다.
 // - leave_requests.kind: leave(휴가), overnight(외박), outing(외출) / status: requested(신청), cancelled(취소)
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
 
@@ -519,6 +521,58 @@ export const mockDb = {
       "decided_by": "o02",
       "requested_at": "2026-10-15T09:00:00.000Z",
       "decided_at": "2026-10-15T09:00:00.000Z"
+    }
+  ],
+  "merit_points": [
+    {
+      "id": "m01",
+      "user_id": "u01",
+      "kind": "merit",
+      "points": 5,
+      "reason": "환경 미화 우수",
+      "given_by": "o01",
+      "grant_id": null,
+      "created_at": "2026-09-10T09:00:00.000Z"
+    },
+    {
+      "id": "m02",
+      "user_id": "u01",
+      "kind": "merit",
+      "points": 8,
+      "reason": "사격 우수",
+      "given_by": "o02",
+      "grant_id": null,
+      "created_at": "2026-10-05T09:00:00.000Z"
+    },
+    {
+      "id": "m03",
+      "user_id": "u01",
+      "kind": "demerit",
+      "points": -2,
+      "reason": "청소 불량",
+      "given_by": "o01",
+      "grant_id": null,
+      "created_at": "2026-10-12T09:00:00.000Z"
+    },
+    {
+      "id": "m04",
+      "user_id": "u02",
+      "kind": "merit",
+      "points": 3,
+      "reason": "경계 근무 성실",
+      "given_by": "o01",
+      "grant_id": null,
+      "created_at": "2026-10-08T09:00:00.000Z"
+    },
+    {
+      "id": "m05",
+      "user_id": "u03",
+      "kind": "merit",
+      "points": 10,
+      "reason": "체육대회 우승",
+      "given_by": "o02",
+      "grant_id": null,
+      "created_at": "2026-10-16T09:00:00.000Z"
     }
   ],
   "leave_requests": [],
