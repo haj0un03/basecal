@@ -1,5 +1,13 @@
-// 달력 탭: 월간 달력, 전역 D-day, 선택한 날의 일정 목록, 개인 일정 추가·수정·삭제
-import { getCalendarEvents, addPersonalEvent, updatePersonalEvent, deletePersonalEvent } from './data.js';
+// 달력 탭: 월간 달력, 전역 D-day, 선택한 날의 일정 목록, 개인 일정 추가·수정·삭제, 간부의 부대 일정 추가·수정·삭제
+import {
+  getCalendarEvents,
+  addPersonalEvent,
+  updatePersonalEvent,
+  deletePersonalEvent,
+  addUnitEvent,
+  updateUnitEvent,
+  deleteUnitEvent,
+} from './data.js';
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -322,7 +330,17 @@ export function renderCalendar(container, user, today = new Date()) {
   addButton.type = 'button';
   addButton.dataset.action = 'add-event';
   addButton.addEventListener('click', () => openEventDialog({ date: state.selected }));
-  listHead.append(el('h3', '', formatDay(state.selected)), addButton);
+  const headButtons = el('div', 'cal-day-list-buttons');
+  headButtons.append(addButton);
+  // 간부에게만 부대 일정 추가 버튼을 둔다.
+  if (user.role === 'officer') {
+    const addUnit = el('button', 'small-button unit-button', '+ 부대 일정');
+    addUnit.type = 'button';
+    addUnit.dataset.action = 'add-unit-event';
+    addUnit.addEventListener('click', () => openUnitEventDialog({ date: state.selected }));
+    headButtons.append(addUnit);
+  }
+  listHead.append(el('h3', '', formatDay(state.selected)), headButtons);
   dayList.append(listHead);
   const selectedEvents = eventsOn(state.selected);
   const hiddenCount = hiddenOn(state.selected).length;
@@ -344,12 +362,17 @@ export function renderCalendar(container, user, today = new Date()) {
         const actions = el('span', 'cal-event-actions');
         const edit = el('button', 'small-button', '수정');
         edit.type = 'button';
-        edit.addEventListener('click', () => openEventDialog({ event: e }));
+        const isUnit = e.type === 'unit';
+        edit.addEventListener('click', () => (isUnit ? openUnitEventDialog({ event: e }) : openEventDialog({ event: e })));
         const remove = el('button', 'small-button danger', '삭제');
         remove.type = 'button';
         remove.addEventListener('click', () => {
-          if (!window.confirm(`"${e.title}" 일정을 지울까요?`)) return;
-          deletePersonalEvent(e.id);
+          const question = isUnit
+            ? `"${e.title}" 부대 일정을 지울까요? 모든 사람의 달력에서 사라집니다.`
+            : `"${e.title}" 일정을 지울까요?`;
+          if (!window.confirm(question)) return;
+          if (isUnit) deleteUnitEvent(e.id);
+          else deletePersonalEvent(e.id);
           redraw('[data-action="add-event"]');
         });
         actions.append(edit, remove);
@@ -479,4 +502,109 @@ function openEventDialog({ event = null, date = null }) {
   form.querySelector('[data-action="close"]').addEventListener('click', () => eventDialog.close());
   eventDialog.showModal();
   f.title.focus();
+}
+
+// ── 간부: 부대 일정 추가·수정 창 ────────────────────────────
+
+// event가 있으면 수정, 없으면 date 날짜로 새로 추가
+function openUnitEventDialog({ event = null, date = null }) {
+  const editing = Boolean(event);
+  const field = (name, label, input) => `
+    <label class="field" data-field="${name}">
+      <span class="field-label">${label}</span>
+      ${input}
+      <span class="field-error" data-error-for="${name}" hidden></span>
+    </label>`;
+
+  eventDialog.innerHTML = `
+    <form class="dialog-body" novalidate>
+      <h2 id="event-dialog-title">${editing ? '부대 일정 수정' : '부대 일정 추가'}</h2>
+      <p class="secret-warning" role="note">비밀로 분류되는 내용은 입력 금지. 공개해도 되는 일정만 등록하세요.</p>
+      <fieldset class="field">
+        <legend class="field-label">분류</legend>
+        <div class="choice-row">
+          <label class="choice"><input type="radio" name="unit_category" value="event"> 행사</label>
+          <label class="choice"><input type="radio" name="unit_category" value="inspection"> 점검</label>
+          <label class="choice"><input type="radio" name="unit_category" value="training"> 훈련</label>
+          <label class="choice"><input type="radio" name="unit_category" value="other"> 기타</label>
+        </div>
+        <span class="field-error" data-error-for="unit_category" hidden></span>
+      </fieldset>
+      <p class="help training-help" hidden>훈련은 제목과 설명 없이 모든 달력에 "훈련"으로만 표시됩니다.</p>
+      ${field('title', '제목', '<input name="title" maxlength="30" required>')}
+      ${field('start_date', '시작 날짜', '<input name="start_date" type="date" required>')}
+      ${field('end_date', '끝나는 날짜 (하루면 비워 두기)', '<input name="end_date" type="date">')}
+      ${field('memo', '설명 (선택)', '<textarea name="memo" rows="2" maxlength="200"></textarea>')}
+      <p class="help">저장하면 모든 병사와 간부의 달력에 바로 보입니다.</p>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">저장</button>
+      <button type="button" class="secondary-button" data-action="close">취소</button>
+    </form>
+  `;
+
+  const form = eventDialog.querySelector('form');
+  const f = form.elements;
+  const category = event?.unit_category ?? 'event';
+  form.querySelector(`input[name="unit_category"][value="${category}"]`).checked = true;
+  // 훈련은 화면에 "훈련"으로 바꿔 보여 주므로, 수정할 때 제목 칸은 비워 둔다.
+  f.title.value = event && category !== 'training' ? event.title : '';
+  f.start_date.value = event ? event.start_date : date;
+  f.end_date.value = event && event.end_date !== event.start_date ? event.end_date : '';
+  f.memo.value = event?.memo ?? '';
+
+  const syncCategory = () => {
+    const isTraining = f.unit_category.value === 'training';
+    form.querySelector('[data-field="title"]').hidden = isTraining;
+    form.querySelector('[data-field="memo"]').hidden = isTraining;
+    form.querySelector('.training-help').hidden = !isTraining;
+  };
+  form.querySelectorAll('input[name="unit_category"]').forEach((radio) => radio.addEventListener('change', syncCategory));
+  syncCategory();
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    form.querySelectorAll('.field-error, .form-error').forEach((node) => {
+      node.hidden = true;
+    });
+    const input = {
+      unit_category: f.unit_category.value,
+      title: f.title.value,
+      start_date: f.start_date.value,
+      end_date: f.end_date.value,
+      memo: f.memo.value,
+    };
+    const result = editing ? updateUnitEvent(event.id, input) : addUnitEvent(input);
+
+    if (result.ok) {
+      eventDialog.close();
+      if (state) {
+        const [y, m] = result.event.start_date.split('-').map(Number);
+        state.year = y;
+        state.month = m - 1;
+        state.selected = result.event.start_date;
+      }
+      redraw('[data-action="add-unit-event"]');
+      return;
+    }
+    if (result.reason === 'invalid') {
+      Object.entries(result.errors).forEach(([name, message]) => {
+        const node = form.querySelector(`[data-error-for="${name}"]`);
+        if (node) {
+          node.textContent = message;
+          node.hidden = false;
+        }
+      });
+      const first = Object.keys(result.errors)[0];
+      f[first]?.focus?.();
+      return;
+    }
+    const error = form.querySelector('.form-error');
+    error.textContent =
+      result.reason === 'forbidden' ? '간부만 부대 일정을 등록할 수 있습니다.' : '이 일정을 찾을 수 없습니다. 다른 간부가 지웠을 수 있습니다.';
+    error.hidden = false;
+  });
+
+  form.querySelector('[data-action="close"]').addEventListener('click', () => eventDialog.close());
+  eventDialog.showModal();
+  (f.unit_category.value === 'training' ? f.start_date : f.title).focus();
 }

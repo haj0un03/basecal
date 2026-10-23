@@ -534,15 +534,46 @@ body {
 
 .cal-day-list-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
 }
 
+.cal-day-list-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.cal-day-list-buttons .small-button {
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.small-button.unit-button {
+  border-color: var(--type-unit);
+  color: var(--type-unit);
+  font-weight: 600;
+}
+
+/* 부대 일정 입력 창: 비밀 입력 금지 안내 (항상 보임) */
+.secret-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 4px solid #b26a00;
+  border-radius: 6px;
+  background: #fff4e0;
+  color: #6b4100;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .cal-day-list h3 {
   margin: 0;
   font-size: 1rem;
+  white-space: nowrap;
 }
 
 .cal-event-actions {

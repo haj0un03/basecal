@@ -158,7 +158,8 @@ function toCalendarEvent(event, user, occurrence = null) {
     repeat_yearly: event.repeat_yearly,
     // 원래 등록한 날짜 (매년 반복 일정을 고칠 때 쓴다)
     original_start_date: event.start_date,
-    editable: kindOf(event) !== null && event.author_id === user.id,
+    // 부대 일정은 간부가, 개인 일정은 쓴 사람이 고칠 수 있다.
+    editable: event.type === 'unit' ? user.role === 'officer' : kindOf(event) !== null && event.author_id === user.id,
   };
 }
 
@@ -272,6 +273,88 @@ export function deletePersonalEvent(id) {
   const event = findOwnPersonalEvent(id, user);
   if (!event) return { ok: false, reason: 'not_found' };
   mockDb.events.splice(mockDb.events.indexOf(event), 1);
+  return { ok: true };
+}
+
+// ── 간부: 부대 일정 추가·수정·삭제 ───────────────────────────
+// 부대 일정은 events에 한 번만 저장하고, 모든 사람의 달력이 그것을 함께 본다.
+// 추가·수정·삭제는 누가 언제 했는지 audit_logs에 남긴다.
+
+const UNIT_CATEGORIES = ['event', 'inspection', 'training', 'other'];
+
+function validateUnitEvent(input) {
+  const category = input.unit_category;
+  const isTraining = category === 'training';
+  const title = String(input.title ?? '').trim();
+  const memo = String(input.memo ?? '').trim();
+  const startDate = input.start_date;
+  const endDate = input.end_date || startDate;
+  const errors = {};
+
+  if (!UNIT_CATEGORIES.includes(category)) errors.unit_category = '분류를 고르세요.';
+  // 훈련은 제목과 설명을 받지 않는다.
+  if (!isTraining) {
+    if (!title) {
+      errors.title = '제목을 입력하세요.';
+    } else if (title.length > MAX_TITLE_LENGTH) {
+      errors.title = `제목은 ${MAX_TITLE_LENGTH}자 이하로 입력하세요.`;
+    }
+    if (memo.length > MAX_MEMO_LENGTH) errors.memo = `설명은 ${MAX_MEMO_LENGTH}자 이하로 입력하세요.`;
+  }
+  if (!isDate(startDate)) {
+    errors.start_date = '날짜를 입력하세요.';
+  } else if (!isDate(endDate)) {
+    errors.end_date = '끝나는 날짜를 확인하세요.';
+  } else if (endDate < startDate) {
+    errors.end_date = '끝나는 날짜는 시작 날짜와 같거나 뒤여야 합니다.';
+  }
+
+  const fields = {
+    type: 'unit',
+    unit_category: category,
+    title: isTraining ? null : title,
+    memo: isTraining ? '' : memo,
+    start_date: startDate,
+    end_date: endDate,
+    time: null,
+    repeat_yearly: false,
+  };
+  return { errors, fields };
+}
+
+// 간부만. 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found', errors }
+export function addUnitEvent(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const { errors, fields } = validateUnitEvent(input);
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const event = { id: nextId('e', mockDb.events), ...fields, author_id: officer.id };
+  mockDb.events.push(event);
+  writeAuditLog(officer, 'create_unit_event', 'events', event.id, now);
+  return { ok: true, event: toCalendarEvent(event, officer) };
+}
+
+export function updateUnitEvent(id, input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const event = mockDb.events.find((e) => e.id === id && e.type === 'unit');
+  if (!event) return { ok: false, reason: 'not_found' };
+  const { errors, fields } = validateUnitEvent(input);
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  Object.assign(event, fields);
+  writeAuditLog(officer, 'update_unit_event', 'events', event.id, now);
+  return { ok: true, event: toCalendarEvent(event, officer) };
+}
+
+export function deleteUnitEvent(id, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const event = mockDb.events.find((e) => e.id === id && e.type === 'unit');
+  if (!event) return { ok: false, reason: 'not_found' };
+  mockDb.events.splice(mockDb.events.indexOf(event), 1);
+  writeAuditLog(officer, 'delete_unit_event', 'events', event.id, now);
   return { ok: true };
 }
 

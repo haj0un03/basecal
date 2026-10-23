@@ -17,11 +17,7 @@ import { renderCalendar } from './calendar.js';
 const TABS = {
   calendar: {
     title: '달력',
-    sections: [
-      {
-        officer: '부대 일정 추가·수정·삭제는 다음 단계(2-4)에서 만듭니다.',
-      },
-    ],
+    sections: [],
   },
   apply: {
     title: '신청',
