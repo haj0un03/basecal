@@ -120,4 +120,4 @@ Phase 5부터는 Supabase 주소와 키를 환경 변수 파일에 넣어야 합
 | [current_status.md](current_status.md) | 현재 개발 진행 상황 |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 작업 규칙 |
 
-개발 담당: 권하준
+개발: 부대 AI 동아리 개발 담당
