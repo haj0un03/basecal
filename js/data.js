@@ -127,6 +127,35 @@ export function getDemoAccounts() {
     }));
 }
 
+// ── 달력 일정 ──────────────────────────────────────────────
+// 내 달력에는 부대 일정(모두 같은 한 건을 함께 본다)과 내가 쓴 일정이 보인다.
+
+function toCalendarEvent(event) {
+  const isTraining = event.type === 'unit' && event.unit_category === 'training';
+  return {
+    id: event.id,
+    type: event.type,
+    // 훈련은 제목과 설명 없이 "훈련"으로만 보여 준다.
+    title: isTraining ? '훈련' : event.title,
+    memo: isTraining ? '' : event.memo,
+    start_date: event.start_date,
+    end_date: event.end_date,
+    time: event.time,
+    unit_category: event.unit_category,
+  };
+}
+
+// start, end: 'YYYY-MM-DD'. 그 기간에 하루라도 걸치는 일정을 돌려준다.
+export function getCalendarEvents(start, end) {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return mockDb.events
+    .filter((e) => e.type === 'unit' || e.author_id === user.id)
+    .filter((e) => e.start_date <= end && e.end_date >= start)
+    .map(toCalendarEvent)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
+}
+
 // ── 간부: 인원 추가와 코드 발급 ─────────────────────────────
 // 추가한 인원과 새 코드는 가상 데이터라서 새로고침하면 사라진다 (Phase 5에서 저장).
 

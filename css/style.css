@@ -162,6 +162,204 @@ body {
   font-weight: 600;
 }
 
+/* ── 달력 ── */
+/* 일정 종류별 색 (임시 값, 디자인을 정하면 바꾼다). 색과 함께 항상 글자로도 구분한다. */
+:root {
+  --type-personal: #6b5bd6;
+  --type-duty: #b26a00;
+  --type-unit: #2f6fb3;
+  --type-leave: #2e8b57;
+  --type-overnight: #0f8b8d;
+  --type-outing: #8a7a00;
+  --type-reservation: #b0466f;
+  --sun: #c62828;
+  --sat: #1e5fae;
+}
+
+.calendar {
+  margin-bottom: 16px;
+}
+
+.dday {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.dday strong {
+  color: var(--accent);
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.cal-title {
+  flex: 1;
+  margin: 0;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.cal-nav-button,
+.cal-today-button {
+  min-width: 44px;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cal-nav-button {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.cal-weekday {
+  padding: 4px 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-num {
+  padding-left: 2px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sun,
+.cal-day.sun .cal-num {
+  color: var(--sun);
+}
+
+.sat,
+.cal-day.sat .cal-num {
+  color: var(--sat);
+}
+
+.cal-day.today .cal-num {
+  display: inline-block;
+  align-self: flex-start;
+  min-width: 22px;
+  padding: 0 4px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #ffffff;
+  text-align: center;
+}
+
+.cal-day.selected {
+  border: 2px solid var(--accent);
+  padding: 3px 1px;
+}
+
+.cal-chip {
+  overflow: hidden;
+  padding: 1px 3px;
+  border-left: 3px solid currentColor;
+  border-radius: 3px;
+  background: var(--bg);
+  font-size: 0.65rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cal-more {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+}
+
+.type-personal { color: var(--type-personal); }
+.type-duty { color: var(--type-duty); }
+.type-unit { color: var(--type-unit); }
+.type-leave { color: var(--type-leave); }
+.type-overnight { color: var(--type-overnight); }
+.type-outing { color: var(--type-outing); }
+.type-reservation { color: var(--type-reservation); }
+
+.cal-day-list {
+  margin-top: 16px;
+}
+
+.cal-day-list h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.cal-empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.cal-event-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cal-event {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border-left: 4px solid currentColor;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.type-badge {
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.cal-event-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cal-event-meta {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 /* 로그인 화면 */
 body.signed-out .user-area,
 body.signed-out .tabbar {

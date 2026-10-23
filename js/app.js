@@ -9,6 +9,7 @@ import {
   addMember,
   reissueCode,
 } from './data.js';
+import { renderCalendar } from './calendar.js';
 
 // 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
 // 각 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
@@ -18,8 +19,8 @@ const TABS = {
     title: '달력',
     sections: [
       {
-        all: '월간 달력, 선택한 날의 일정, 전역 D-day, 개인 일정 추가는 Phase 2에서 만듭니다.',
-        officer: '부대 일정 추가·수정·삭제는 Phase 2에서 만듭니다.',
+        all: '개인 일정 추가·수정·삭제는 다음 단계(2-2)에서 만듭니다.',
+        officer: '부대 일정 추가·수정·삭제는 다음 단계(2-4)에서 만듭니다.',
       },
     ],
   },
@@ -93,7 +94,14 @@ function renderView(user) {
 
   const heading = document.createElement('h1');
   heading.textContent = title;
-  view.replaceChildren(heading, ...sections.map((spec) => renderSection(spec, user)));
+  const parts = [heading];
+  if (tab === 'calendar') {
+    const calendar = document.createElement('div');
+    calendar.className = 'calendar';
+    renderCalendar(calendar, user);
+    parts.push(calendar);
+  }
+  view.replaceChildren(...parts, ...sections.map((spec) => renderSection(spec, user)));
 
   document.querySelectorAll('.tab').forEach((link) => {
     if (link.dataset.tab === tab) {
