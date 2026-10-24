@@ -888,9 +888,58 @@ body {
 }
 
 .apply-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.apply-weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px 0;
+}
+
+/* 한 주 = 날짜 칸 7개 위에 내 휴가 막대를 겹쳐 놓는 줄. 1줄: 날짜 숫자, 2줄: 막대 */
+.apply-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: 26px 20px;
+}
+
+.apply-blank {
+  grid-row: 1 / -1;
+}
+
+/* 내 휴가 막대: 여러 날이면 이어서 하나로, 글자는 가운데에 한 번 (달력 탭의 막대와 같은 모양) */
+.apply-bar {
+  position: relative;
+  z-index: 1;
+  grid-row: 2;
+  align-self: center;
+  overflow: hidden;
+  height: 16px;
+  margin: 0 3px;
+  border-radius: 4px;
+  background: var(--bg);
+  background: color-mix(in srgb, currentColor 16%, var(--surface));
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.apply-bar.cont-left {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.apply-bar.cont-right {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .apply-day {
@@ -898,8 +947,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
+  grid-row: 1 / -1;
   min-width: 0;
-  min-height: 44px;
+  min-height: 46px;
   padding: 4px 0;
   border: 0;
   border-radius: 6px;
@@ -929,12 +979,6 @@ body {
 
 .apply-day.mine {
   background: var(--bg);
-}
-
-.apply-tag {
-  color: var(--type-leave);
-  font-size: 0.62rem;
-  font-weight: 600;
 }
 
 /* 고른 휴가 기간 */

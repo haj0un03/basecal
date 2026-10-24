@@ -504,19 +504,60 @@ function applyParts(redraw, user, summary) {
   nav.append(prev, el('span', 'apply-month', `${st.year}년 ${st.month + 1}월`), next);
   box.append(nav);
 
-  // 신청 달력
+  // 신청 달력: 요일 줄 + 한 주에 한 줄. 이미 신청한 휴가는 달력 탭처럼 그 주 안에서 막대 하나로 잇고,
+  // 글자는 막대 가운데에 한 번만 쓴다. 주가 바뀌면 새 줄에서 글자를 다시 쓴다.
   const grid = el('div', 'apply-grid');
+  const weekdays = el('div', 'apply-weekdays');
   WEEKDAYS.forEach((name, i) => {
     const head = el('div', 'cal-weekday', name);
     if (i === 0) head.classList.add('sun');
     if (i === 6) head.classList.add('sat');
-    grid.append(head);
+    weekdays.append(head);
   });
+  grid.append(weekdays);
+
   const first = new Date(st.year, st.month, 1).getDay();
   const lastDay = new Date(st.year, st.month + 1, 0).getDate();
-  for (let i = 0; i < first; i += 1) grid.append(el('div', 'apply-blank'));
-  for (let day = 1; day <= lastDay; day += 1) {
-    const iso = isoOf(st.year, st.month, day);
+  const weekCount = Math.ceil((first + lastDay) / 7);
+  for (let w = 0; w < weekCount; w += 1) {
+    const week = el('div', 'apply-week');
+    const days = [];
+    for (let col = 0; col < 7; col += 1) {
+      const day = w * 7 + col - first + 1;
+      days.push(day >= 1 && day <= lastDay ? isoOf(st.year, st.month, day) : null);
+    }
+    days.forEach((iso, col) => {
+      if (!iso) {
+        const blank = el('div', 'apply-blank');
+        blank.style.gridColumn = String(col + 1);
+        week.append(blank);
+        return;
+      }
+      week.append(applyDayCell(iso, col));
+    });
+
+    // 이 주에 걸치는 내 휴가를 막대로 놓는다 (내 신청은 서로 겹치지 않으므로 한 줄이면 된다)
+    const inMonth = days.filter(Boolean);
+    const weekStart = inMonth[0];
+    const weekEnd = inMonth[inMonth.length - 1];
+    myActive
+      .filter((r) => r.start_date <= weekEnd && r.end_date >= weekStart)
+      .forEach((r) => {
+        const from = r.start_date > weekStart ? r.start_date : weekStart;
+        const to = r.end_date < weekEnd ? r.end_date : weekEnd;
+        const bar = el('div', 'apply-bar type-leave', '휴가');
+        bar.style.gridColumn = `${days.indexOf(from) + 1} / ${days.indexOf(to) + 2}`;
+        bar.dataset.start = from;
+        bar.dataset.end = to;
+        if (r.start_date < from) bar.classList.add('cont-left');
+        if (r.end_date > to) bar.classList.add('cont-right');
+        bar.setAttribute('aria-hidden', 'true');
+        week.append(bar);
+      });
+    grid.append(week);
+  }
+
+  function applyDayCell(iso, col) {
     const mine = myLeaveOn(iso);
     const outside = iso < win.start || iso > win.end;
     const cell = button('apply-day', '', null, () => {
@@ -531,8 +572,8 @@ function applyParts(redraw, user, summary) {
       redraw(`.apply-day[data-date="${iso}"]`);
     });
     cell.dataset.date = iso;
-    cell.append(el('span', 'apply-num', String(day)));
-    const col = (first + day - 1) % 7;
+    cell.style.gridColumn = String(col + 1);
+    cell.append(el('span', 'apply-num', String(Number(iso.slice(8)))));
     if (col === 0) cell.classList.add('sun');
     if (col === 6) cell.classList.add('sat');
     if (iso === win.start) cell.classList.add('today');
@@ -544,7 +585,6 @@ function applyParts(redraw, user, summary) {
     } else if (mine) {
       cell.disabled = true;
       cell.classList.add('mine');
-      cell.append(el('span', 'apply-tag', '휴가'));
       label = ', 이미 신청한 휴가';
     }
     const end = st.end ?? st.start;
@@ -555,7 +595,7 @@ function applyParts(redraw, user, summary) {
       label += iso === st.start ? ', 출발일' : iso === end ? ', 복귀일' : ', 휴가 기간';
     }
     cell.setAttribute('aria-label', `${shortDay(iso)}${label}`);
-    grid.append(cell);
+    return cell;
   }
   box.append(grid);
 
