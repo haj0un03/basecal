@@ -756,7 +756,8 @@ let rateMessage = null;
 let rosterState = null;
 
 function quotaParts(redraw, user) {
-  const parts = [];
+  // 화면 순서: 출타 현황 달력 → 출타율 → 기간별 출타율 (2026-10-24 사용자 요청)
+  const parts = [...rosterParts(redraw, user)];
   const settings = getRateSettings();
   const capacity = (rate) => Math.floor((settings.soldiers * rate) / 100);
 
@@ -856,8 +857,6 @@ function quotaParts(redraw, user) {
     });
     parts.push(list);
   }
-
-  parts.push(...rosterParts(redraw, user));
   return parts;
 }
 
