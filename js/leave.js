@@ -19,6 +19,7 @@ import {
   getMyLeaveRequests,
   applyLeave,
   applyAbsence,
+  getMyAbsenceQuota,
   cancelLeaveRequest,
   getDayAvailability,
   getAbsenceRoster,
@@ -482,7 +483,8 @@ function applyParts(redraw, user, summary) {
   const monthFirst = isoOf(st.year, st.month, 1);
   const monthLast = isoOf(st.year, st.month, new Date(st.year, st.month + 1, 0).getDate());
   const seatStart = monthFirst > win.start ? monthFirst : win.start;
-  const seatEnd = monthLast < win.end ? monthLast : win.end;
+  // 말일이 토요일이면 다음 날(일요일)까지 봐야 외박 가능 여부를 알 수 있어 하루 더 본다
+  const seatEnd = nextDayOf(monthLast) < win.end ? nextDayOf(monthLast) : win.end;
   const seats = Object.fromEntries(
     // 고른 종류의 남은 자리: 휴가는 휴가·총 출타 중 적은 쪽, 외박·외출은 총 출타
     (seatStart <= seatEnd ? getDayAvailability(st.kind, seatStart, seatEnd) : []).map((x) => [x.date, x]),
@@ -516,6 +518,7 @@ function applyParts(redraw, user, summary) {
     kinds.append(b);
   });
   box.append(kinds);
+  if (st.kind !== 'leave') box.append(quotaLine(st.start ?? win.start));
 
   // 달 넘기기 (신청할 수 있는 달만)
   const [minY, minM] = win.start.split('-').map(Number);
@@ -597,11 +600,20 @@ function applyParts(redraw, user, summary) {
   function applyDayCell(iso, col) {
     const mine = myAbsenceOn(iso);
     const outside = iso < win.start || iso > win.end;
+    // 외박은 토요일 출발 → 일요일 복귀만. 일요일도 신청 기간 안이고, 내 출타가 없고, 마감이 아니어야 한다.
+    const sunday = nextDayOf(iso);
+    const notSaturday =
+      st.kind === 'overnight' && (col !== 6 || sunday > win.end || Boolean(myAbsenceOn(sunday)) || Boolean(seats[sunday]?.full));
     const cell = button('apply-day', '', null, () => {
+      if (notSaturday) return;
       if (st.kind === 'outing') {
         // 외출은 하루짜리라 한 번 누르면 끝
         st.start = iso;
         st.end = iso;
+      } else if (st.kind === 'overnight') {
+        // 토요일을 누르면 토~일(1박 2일)이 잡힌다
+        st.start = iso;
+        st.end = sunday;
       } else if (!st.start || st.end || iso < st.start) {
         st.start = iso;
         st.end = null;
@@ -627,6 +639,14 @@ function applyParts(redraw, user, summary) {
       cell.disabled = true;
       cell.classList.add('mine');
       label = `, 이미 신청한 ${ABSENCE_KIND_LABELS[mine.kind]}`;
+    } else if (notSaturday && st.start && iso >= st.start && iso <= (st.end ?? st.start)) {
+      // 고른 외박의 일요일(복귀일): 기간 표시만 하고 누르지는 않는다
+      cell.disabled = true;
+    } else if (notSaturday) {
+      // 외박을 고르면 토요일만 누를 수 있다
+      cell.disabled = true;
+      cell.classList.add('not-allowed');
+      label = ', 외박은 토요일 출발만 가능';
     } else if (seats[iso]?.full) {
       // 정원이 찬 날: 회색 "마감", 누를 수 없음
       cell.disabled = true;
@@ -651,7 +671,12 @@ function applyParts(redraw, user, summary) {
 
   // 안내 또는 기간과 종류별 일수
   if (!st.start) {
-    const first = st.kind === 'outing' ? '외출할 날을 누르세요.' : '출발일을 누르세요.';
+    const first =
+      st.kind === 'outing'
+        ? '외출할 날을 누르세요.'
+        : st.kind === 'overnight'
+          ? '외박할 토요일을 누르세요 (토요일 출발 → 일요일 복귀).'
+          : '출발일을 누르세요.';
     box.append(el('p', 'apply-guide', `${first} 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날입니다.`));
     return [box];
   }
@@ -741,6 +766,29 @@ function applyParts(redraw, user, summary) {
 }
 
 
+function nextDayOf(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const next = new Date(y, m - 1, d + 1);
+  return isoOf(next.getFullYear(), next.getMonth(), next.getDate());
+}
+
+function isWeekendDay(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const day = new Date(y, m - 1, d).getDay();
+  return day === 0 || day === 6;
+}
+
+// 외박·외출 횟수 안내: 그 날짜가 속한 분기의 외박·주말 외출, 그 달의 평일 외출 (포상으로 쓴 것은 세지 않음)
+function quotaLine(iso) {
+  const q = getMyAbsenceQuota(iso);
+  const line = el('p', 'apply-quota');
+  line.append(
+    el('span', '', `${q.quarter.label}: 외박 ${q.quarter.overnight}/${q.limits.overnight} · 주말 외출 ${q.quarter.weekendOuting}/${q.limits.weekendOuting} (둘 중 한 종류만)`),
+    el('span', '', `${q.month.label}: 평일 외출 ${q.month.weekdayOuting}/${q.limits.weekdayOuting}`),
+  );
+  return line;
+}
+
 // 외박·외출 신청 부분: 기간(또는 하루)과 포상 사용 여부
 function absenceFormParts(redraw, st) {
   const kindLabel = ABSENCE_KIND_LABELS[st.kind];
@@ -751,9 +799,9 @@ function absenceFormParts(redraw, st) {
   const parts = [];
   const range = el('p', 'apply-range');
   if (st.kind === 'outing') {
-    range.append(el('strong', '', shortDay(st.start)), ' · 외출 (하루)');
+    range.append(el('strong', '', shortDay(st.start)), ` · ${isWeekendDay(st.start) ? '주말' : '평일'} 외출 (하루)`);
   } else {
-    range.append(el('strong', '', `${shortDay(st.start)} ~ ${shortDay(st.end)}`), ` · 외박 ${inclusiveDays(st.start, st.end)}일 (출발·복귀일 포함)`);
+    range.append(el('strong', '', `${shortDay(st.start)} ~ ${shortDay(st.end)}`), ' · 외박 (1박 2일)');
   }
   parts.push(range);
 
@@ -766,7 +814,7 @@ function absenceFormParts(redraw, st) {
   pass.disabled = passLeft < 1;
   passRow.append(pass, ` 포상 ${kindLabel}${ro} 쓰기 (남은 ${passLeft}회)`);
   form.append(passRow);
-  form.append(el('p', 'help', `${kindLabel}은 휴가 일수를 쓰지 않고, 총 출타 정원 안에서 나갑니다.${passLeft < 1 ? ` 남은 포상 ${kindLabel}이 없어 일반 ${kindLabel}${ro} 신청합니다.` : ''}`));
+  form.append(el('p', 'help', `${kindLabel}은 휴가 일수를 쓰지 않고, 총 출타 정원 안에서 나갑니다. 포상으로 쓰면 분기·한 달 횟수에 들어가지 않습니다.${passLeft < 1 ? ` 남은 포상 ${kindLabel}이 없어 일반 ${kindLabel}${ro} 신청합니다.` : ''}`));
   const error = el('p', 'form-error');
   error.setAttribute('role', 'alert');
   error.hidden = true;
@@ -819,9 +867,7 @@ function myRequestParts(redraw) {
     const meta =
       r.kind === 'leave'
         ? r.items.map((x) => `${LEAVE_TYPE_LABELS[x.leave_type]} ${x.days}`).join(' + ')
-        : r.reward_pass
-          ? `포상 ${kindLabel} 사용`
-          : `일반 ${kindLabel}`;
+        : `${r.kind === 'outing' ? (isWeekendDay(r.start_date) ? '주말 외출' : '평일 외출') : '외박'} · ${r.reward_pass ? `포상 ${kindLabel} 사용` : '일반'}`;
     item.dataset.kind = r.kind;
     item.append(
       el('span', `status-badge ${active ? 'status-approved' : 'status-rejected'}`, active ? '신청' : '취소'),

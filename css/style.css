@@ -1100,6 +1100,23 @@ body {
 .apply-kind.type-overnight[aria-pressed="true"] { color: var(--type-overnight); }
 .apply-kind.type-outing[aria-pressed="true"] { color: var(--type-outing); }
 
+/* 외박·외출 횟수 안내 */
+.apply-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 0.82rem;
+}
+
+/* 외박을 고르면 토요일이 아닌 날은 흐리게 */
+.apply-day.not-allowed .apply-num {
+  color: var(--border);
+}
+
 .apply-pass {
   display: flex;
   align-items: center;

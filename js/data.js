@@ -1,7 +1,13 @@
 // 데이터 계층. 화면 코드는 가상 데이터를 직접 읽지 않고 이 파일의 함수만 쓴다.
 // Phase 5에서 이 파일 안쪽만 Supabase로 바꿔 끼운다.
 import { mockDb, mockAuth } from './mock-data.js';
-import { MERIT_COSTS, MAX_POINTS_PER_ENTRY } from './settings.js';
+import {
+  MERIT_COSTS,
+  MAX_POINTS_PER_ENTRY,
+  OVERNIGHT_PER_QUARTER,
+  WEEKEND_OUTING_PER_QUARTER,
+  WEEKDAY_OUTING_PER_MONTH,
+} from './settings.js';
 
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 10;
@@ -1099,10 +1105,92 @@ function fullDatesIn(requestKind, start, end) {
 
 // ── 외박·외출 신청 (Phase 3-4) ──────────────────────────────
 // 외박·외출은 휴가 일수를 쓰지 않고, 따로 출타율 없이 총 출타 정원 안에서만 나간다.
-// 외출은 하루짜리다 (가정). 외박은 기간을 고른다. 횟수 제한은 없다 (가정, prd.md 11번 확인 항목).
-// 포상 외박·외출이 남아 있으면 "포상으로 쓰기"를 고를 수 있고, 그러면 1회 차감된다 (reward_pass).
+// 규칙 (2026-10-24 사용자 확정, 숫자는 js/settings.js):
+// - 외출은 하루짜리. 토·일이면 주말 외출, 월~금이면 평일 외출
+// - 외박은 토요일 출발 → 일요일 복귀(1박 2일)만
+// - 한 분기(달력 기준 1~3월…)에 외박 1회, 주말 외출 2회. 단 한 분기에 둘 중 한 종류만 쓸 수 있다
+// - 한 달(1일~말일)에 평일 외출 2회
+// - 포상 외박·외출이 남아 있으면 "포상으로 쓰기"를 고를 수 있고, 그러면 포상 1회가 차감되고 위 횟수에는 들어가지 않는다
 
 const ABSENCE_LABELS = { overnight: '외박', outing: '외출' };
+
+function nextDay(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return localISO(new Date(y, m - 1, d + 1));
+}
+
+function weekdayOf(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay();
+}
+
+function isWeekend(iso) {
+  const day = weekdayOf(iso);
+  return day === 0 || day === 6;
+}
+
+function quarterRange(iso) {
+  const [y, m] = iso.split('-').map(Number);
+  const q = Math.floor((m - 1) / 3);
+  const first = q * 3 + 1;
+  const lastDay = new Date(y, first + 2, 0).getDate();
+  return {
+    start: `${y}-${String(first).padStart(2, '0')}-01`,
+    end: `${y}-${String(first + 2).padStart(2, '0')}-${lastDay}`,
+    label: `${first}~${first + 2}월`,
+  };
+}
+
+function monthRange(iso) {
+  const [y, m] = iso.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return { start: `${y}-${String(m).padStart(2, '0')}-01`, end: `${y}-${String(m).padStart(2, '0')}-${lastDay}`, label: `${m}월` };
+}
+
+// 그 날짜가 속한 분기·달에 내가 쓴 외박·외출 횟수 (포상으로 쓴 것과 취소한 것은 빼고 센다)
+// 결과: { quarter: { label, overnight, weekendOuting }, month: { label, weekdayOuting }, limits: {...} }
+export function getMyAbsenceQuota(iso) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return null;
+  const q = quarterRange(iso);
+  const mo = monthRange(iso);
+  const mine = mockDb.leave_requests.filter((r) => r.user_id === user.id && r.status === 'requested' && !r.reward_pass);
+  const inRange = (r, range) => r.start_date >= range.start && r.start_date <= range.end;
+  return {
+    quarter: {
+      label: q.label,
+      overnight: mine.filter((r) => r.kind === 'overnight' && inRange(r, q)).length,
+      weekendOuting: mine.filter((r) => r.kind === 'outing' && isWeekend(r.start_date) && inRange(r, q)).length,
+    },
+    month: {
+      label: mo.label,
+      weekdayOuting: mine.filter((r) => r.kind === 'outing' && !isWeekend(r.start_date) && inRange(r, mo)).length,
+    },
+    limits: { overnight: OVERNIGHT_PER_QUARTER, weekendOuting: WEEKEND_OUTING_PER_QUARTER, weekdayOuting: WEEKDAY_OUTING_PER_MONTH },
+  };
+}
+
+// 횟수 규칙 확인. 문제가 있으면 안내 문구, 없으면 null. (포상으로 쓰면 확인하지 않는다)
+function checkAbsenceQuota(kind, start) {
+  const quota = getMyAbsenceQuota(start);
+  const { quarter, month, limits } = quota;
+  if (kind === 'overnight') {
+    if (quarter.weekendOuting > 0) {
+      return `이번 분기(${quarter.label})에 주말 외출을 써서 외박은 쓸 수 없습니다. 한 분기에 외박과 주말 외출 중 한 종류만 쓸 수 있습니다.`;
+    }
+    if (quarter.overnight >= limits.overnight) return `이번 분기(${quarter.label}) 외박 ${limits.overnight}회를 이미 썼습니다.`;
+    return null;
+  }
+  if (isWeekend(start)) {
+    if (quarter.overnight > 0) {
+      return `이번 분기(${quarter.label})에 외박을 써서 주말 외출은 쓸 수 없습니다. 한 분기에 외박과 주말 외출 중 한 종류만 쓸 수 있습니다.`;
+    }
+    if (quarter.weekendOuting >= limits.weekendOuting) return `이번 분기(${quarter.label}) 주말 외출 ${limits.weekendOuting}회를 모두 썼습니다.`;
+    return null;
+  }
+  if (month.weekdayOuting >= limits.weekdayOuting) return `${month.label} 평일 외출 ${limits.weekdayOuting}회를 모두 썼습니다.`;
+  return null;
+}
 
 // 병사만. input: { kind: 'overnight' | 'outing', start_date, end_date, use_pass }
 // 결과: { ok: true, request } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
@@ -1115,14 +1203,17 @@ export function applyAbsence(input, now = Date.now()) {
     return { ok: false, reason: 'invalid', errors: { kind: '외박인지 외출인지 고르세요.' } };
   }
   const start = input.start_date;
-  const end = kind === 'outing' ? start : input.end_date || start;
+  // 외출은 하루, 외박은 토요일 출발 → 다음 날(일요일) 복귀로 정해진다.
+  const end = kind === 'outing' || !isDate(start) ? start : nextDay(start);
+  const usePass = Boolean(input.use_pass);
   if (kind === 'outing' && input.end_date && input.end_date !== start) {
     errors.dates = '외출은 하루만 신청할 수 있습니다.';
+  } else if (kind === 'overnight' && (!isDate(start) || weekdayOf(start) !== 6 || (input.end_date && input.end_date !== end))) {
+    errors.dates = '외박은 토요일 출발, 일요일 복귀(1박 2일)만 신청할 수 있습니다.';
   } else {
-    const dateError = checkAbsenceDates(kind, start, end, now);
+    const dateError = checkAbsenceDates(kind, start, end, now) ?? (usePass ? null : checkAbsenceQuota(kind, start));
     if (dateError) errors.dates = dateError;
   }
-  const usePass = Boolean(input.use_pass);
   if (usePass) {
     const passType = kind === 'overnight' ? 'overnight_pass' : 'outing_pass';
     const left = getMyPassSummary().find((x) => x.type === passType)?.remaining ?? 0;

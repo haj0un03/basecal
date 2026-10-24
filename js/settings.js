@@ -11,3 +11,11 @@ export const MERIT_COSTS = {
 
 // 간부가 한 번에 줄 수 있는 상점·벌점의 최대 점수 (2026-10-24 사용자 확정)
 export const MAX_POINTS_PER_ENTRY = 50;
+
+// 외박·외출 횟수 제한 (2026-10-24 사용자 확정). 분기·한 달은 달력 기준(1~3월… / 1일~말일).
+// - 외박은 토요일 출발 → 일요일 복귀(1박 2일)만
+// - 한 분기에 외박과 주말 외출 중 한 종류만 쓸 수 있다
+// - 포상 외박·외출로 쓴 것은 이 횟수에 들어가지 않는다
+export const OVERNIGHT_PER_QUARTER = 1;
+export const WEEKEND_OUTING_PER_QUARTER = 2;
+export const WEEKDAY_OUTING_PER_MONTH = 2;
