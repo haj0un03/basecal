@@ -1,5 +1,6 @@
 // 앱의 시작점. 들어오지 않았으면 들어오기 화면을, 들어왔으면 사용자 영역과 아래쪽 탭을 그린다.
 import {
+  init,
   getCurrentUser,
   signIn,
   signOut,
@@ -36,6 +37,7 @@ const TABS = {
 const OLD_TABS = { leave: 'apply', facility: 'apply' };
 
 const ROLE_LABELS = { soldier: '병사', officer: '간부' };
+const NETWORK_ERROR = '서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
 
 const view = document.getElementById('view');
 const userButton = document.getElementById('user-button');
@@ -160,14 +162,17 @@ function renderSignIn() {
     error.hidden = false;
   };
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!nameInput.value.trim() || !codeInput.value.trim()) {
       showError('이름과 개인 코드를 입력하세요.');
       return;
     }
 
-    const result = signIn(nameInput.value, codeInput.value);
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await signIn(nameInput.value, codeInput.value);
+    submit.disabled = false;
     if (result.ok) {
       history.replaceState(null, '', '#calendar');
       render();
@@ -183,6 +188,8 @@ function renderSignIn() {
       showError(`5회 연속 틀려 이 이름으로는 들어올 수 없습니다. ${minutes}분 뒤에 다시 시도하세요.`);
     } else if (result.reason === 'inactive') {
       showError('사용할 수 없는 인원입니다. 간부에게 문의하세요.');
+    } else if (result.reason === 'network') {
+      showError(NETWORK_ERROR);
     } else {
       showError(`이름 또는 개인 코드가 맞지 않습니다. (남은 시도 ${result.remainingAttempts}회)`);
     }
@@ -245,13 +252,15 @@ function openAddMemberDialog() {
     datalist.append(option);
   });
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     memberDialog.querySelectorAll('.field-error, .form-error').forEach((el) => {
       el.hidden = true;
     });
 
-    const result = addMember({
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await addMember({
       name: form.elements.name.value,
       role: form.elements.role.value,
       position: form.elements.position.value,
@@ -259,6 +268,7 @@ function openAddMemberDialog() {
       discharge_date: form.elements.discharge_date.value,
     });
 
+    submit.disabled = false;
     if (result.ok) {
       showIssuedCode(result, '인원을 추가했습니다');
       return;
@@ -276,7 +286,7 @@ function openAddMemberDialog() {
       return;
     }
     const error = memberDialog.querySelector('.form-error');
-    error.textContent = '간부만 인원을 추가할 수 있습니다.';
+    error.textContent = result.reason === 'network' ? NETWORK_ERROR : '간부만 인원을 추가할 수 있습니다.';
     error.hidden = false;
   });
 
@@ -309,15 +319,23 @@ function openReissueDialog() {
     select.append(option);
   });
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const result = reissueCode(select.value);
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await reissueCode(select.value);
+    submit.disabled = false;
     if (result.ok) {
       showIssuedCode(result, '코드를 다시 발급했습니다');
       return;
     }
     const error = memberDialog.querySelector('.form-error');
-    error.textContent = result.reason === 'forbidden' ? '간부만 코드를 발급할 수 있습니다.' : '대상을 다시 골라 주세요.';
+    error.textContent =
+      result.reason === 'forbidden'
+        ? '간부만 코드를 발급할 수 있습니다.'
+        : result.reason === 'network'
+          ? NETWORK_ERROR
+          : '대상을 다시 골라 주세요.';
     error.hidden = false;
   });
 
@@ -388,8 +406,8 @@ function renderUser(user) {
     items.push(menuButton('코드 다시 발급', openReissueDialog));
   }
   items.push(
-    menuButton('로그아웃', () => {
-      signOut();
+    menuButton('로그아웃', async () => {
+      await signOut();
       history.replaceState(null, '', location.pathname);
       render();
     }),
@@ -432,4 +450,6 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('hashchange', render);
 
+// 서버 모드에서는 들어와 있던 사람의 데이터를 먼저 받아 온다
+await init();
 render();

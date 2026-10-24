@@ -2,7 +2,7 @@
 // - 모든 이름과 일정은 지어낸 것이다. 실제 병사 정보를 넣지 않는다.
 // - 표 이름은 prd.md 7번(Supabase 표 이름)과 같다. Phase 5에서 저장만 바꿔 끼운다.
 // - 화면 코드는 이 파일을 직접 읽지 않고, 데이터 계층(Phase 1에서 만든다)을 거친다.
-// - 개인 코드는 Supabase 인증이 따로 관리하므로 profiles에 넣지 않는다 (아래 mockAuth).
+// - 개인 코드는 profiles에 넣지 않는다 (아래 mockAuth). Supabase에서는 private.member_codes에 해시로 둔다.
 //
 // 값의 뜻
 // - profiles.role: soldier(병사), officer(간부)
@@ -802,7 +802,7 @@ export const mockDb = {
 
 // 로그인 흉내용 개인 코드 (Phase 0~4 전용)
 // - 간부가 사람마다 발급하는 영문·숫자 6자리 코드. 헷갈리는 0, O, 1, I, L은 쓰지 않는다.
-// - Supabase 인증 기능을 흉내 낸다. Phase 5에서는 Supabase가 해시로 따로 관리하므로 이 목록을 지운다.
+// - 서버 모드(Phase 5)에서는 쓰지 않는다. supabase/01_members.sql에 같은 가상 인원·코드를 해시로 넣어 두었다.
 // - 가상 인원 전용 연습 코드다. 실제 코드를 넣지 않는다.
 export const mockAuth = [
   {

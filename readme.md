@@ -52,6 +52,20 @@ python -m http.server 8000
 
 Phase 5부터는 Supabase 주소와 키를 환경 변수 파일에 넣어야 합니다. 이 파일은 저장소에 올리지 않습니다.
 
+### Supabase에 연결하기 (Phase 5)
+
+1. `.env.example`을 복사해 `.env`를 만들고, Supabase 화면의 Project Settings → API에서 **Project URL**과 **공개용(publishable/anon) 키**를 넣습니다. 비밀(secret/service_role) 키는 넣지 않습니다.
+2. Supabase 화면의 **SQL Editor**에서 `supabase/` 폴더의 SQL 파일을 번호 순서대로(`01_…`부터) 붙여 넣고 Run을 누릅니다. 여러 번 실행해도 됩니다.
+3. 프로젝트 폴더에서 아래 명령을 실행합니다. `.env` 값으로 `js/config.js`를 만듭니다.
+
+```
+python tools/make_config.py
+```
+
+4. 평소처럼 `python -m http.server 8000`으로 열면 Supabase에 저장됩니다. `js/config.js`를 지우면 다시 가상 데이터로 동작합니다.
+
+Supabase 모드에서는 들어오기 화면에 연습용 코드 목록이 보이지 않습니다. 위 표의 코드를 그대로 쓰면 됩니다.
+
 ## 사용 방법
 
 아래는 완성되었을 때의 사용 흐름입니다.

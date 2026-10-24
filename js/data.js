@@ -1,6 +1,10 @@
 // 데이터 계층. 화면 코드는 가상 데이터를 직접 읽지 않고 이 파일의 함수만 쓴다.
-// Phase 5에서 이 파일 안쪽만 Supabase로 바꿔 끼운다.
+// Phase 5: js/config.js가 있으면(REMOTE) Supabase 서버 함수로 저장하고, 없으면 가상 데이터로 동작한다.
+// - 5-1(지금): 들어오기, 인원 추가·코드 발급. 서버에서 받은 인원(profiles)을 mockDb.profiles 자리에 채워 쓴다.
+// - 아직 옮기지 않은 표(일정, 휴가 등)는 서버 모드에서도 가상 데이터다. 가상 인원 id(u01…)가 서버와 같아서 함께 쓸 수 있다.
+// - 서버 모드에서 쓰기 함수(signIn, signOut, addMember, reissueCode)는 Promise를 돌려준다. 화면은 await로 받는다.
 import { mockDb, mockAuth } from './mock-data.js';
+import { REMOTE, rpc } from './remote.js';
 import {
   MERIT_COSTS,
   MAX_POINTS_PER_ENTRY,
@@ -39,7 +43,37 @@ function writeStore(key, value) {
   }
 }
 
-let sessionUserId = readStore(SESSION_KEY, null);
+let sessionUserId = REMOTE ? null : readStore(SESSION_KEY, null);
+// 서버 모드의 접속 토큰 (들어오면 서버가 준다. 이 기기에 남겨 둔다)
+const TOKEN_KEY = 'basecal.token';
+let token = REMOTE ? readStore(TOKEN_KEY, null) : null;
+// 서버가 세어 준 활성 병사 수 (병사에게는 다른 병사 명단을 주지 않으므로 숫자만 받는다)
+let remoteSoldierCount = null;
+
+// 서버에서 화면에 필요한 데이터를 다시 받는다. 앱을 열 때와 서버에 쓴 뒤에 부른다.
+// 결과: true(받음) / false(접속이 끊김 → 나간 상태로)
+async function loadState() {
+  if (!token) return false;
+  const state = await rpc('load_state', { p_token: token });
+  if (!state.ok) {
+    if (state.reason === 'session') {
+      // 만료됐거나 코드가 다시 발급됨
+      token = null;
+      writeStore(TOKEN_KEY, null);
+    }
+    sessionUserId = null;
+    return false;
+  }
+  mockDb.profiles.splice(0, mockDb.profiles.length, ...state.profiles);
+  remoteSoldierCount = state.active_soldiers;
+  sessionUserId = state.me.id;
+  return true;
+}
+
+// 앱을 열 때 한 번 부른다 (가상 데이터 모드에서는 할 일이 없다)
+export async function init() {
+  if (REMOTE) await loadState();
+}
 // { 이름: { count: 연속 실패 횟수, lockedUntil: 잠금이 풀리는 시각(밀리초) } }
 const failures = readStore(FAILURES_KEY, {});
 
@@ -74,12 +108,14 @@ export function getCurrentUser() {
 }
 
 // 결과: { ok: true, user } 또는 { ok: false, reason: 'format' | 'invalid' | 'locked' | 'inactive', ... }
+// 서버 모드에서는 reason에 'network'(연결 안 됨)가 더 있다.
 export function signIn(name, codeInput, now = Date.now()) {
   const key = name.trim();
   const code = normalizeCode(codeInput);
   if (!CODE_PATTERN.test(code)) {
     return { ok: false, reason: 'format' };
   }
+  if (REMOTE) return remoteSignIn(key, code);
 
   let record = failures[key] ?? { count: 0, lockedUntil: 0 };
   if (record.lockedUntil > now) {
@@ -118,13 +154,37 @@ export function signIn(name, codeInput, now = Date.now()) {
   return { ok: true, user: { ...profile } };
 }
 
+async function remoteSignIn(name, code) {
+  const result = await rpc('sign_in', { p_name: name, p_code: code });
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason,
+      lockedUntil: result.locked_until,
+      remainingAttempts: result.remaining_attempts,
+    };
+  }
+  token = result.token;
+  writeStore(TOKEN_KEY, token);
+  if (!(await loadState())) return { ok: false, reason: 'network' };
+  return { ok: true, user: getCurrentUser() };
+}
+
 export function signOut() {
   sessionUserId = null;
   writeStore(SESSION_KEY, null);
+  if (REMOTE && token) {
+    const old = token;
+    token = null;
+    writeStore(TOKEN_KEY, null);
+    return rpc('sign_out', { p_token: old });
+  }
 }
 
 // 연습용 가상 인원과 코드 (들어오기 화면 안내용, Phase 0~4 전용. Phase 5에서 지운다)
 export function getDemoAccounts() {
+  // 서버 모드에서는 코드를 화면에 보여 주지 않는다 (코드는 서버에 해시로만 있다)
+  if (REMOTE) return [];
   return mockDb.profiles
     .filter((p) => p.is_active)
     .map((p) => ({
@@ -448,6 +508,17 @@ export function addMember(input, now = Date.now()) {
   if (Object.keys(errors).length > 0) {
     return { ok: false, reason: 'invalid', errors };
   }
+  if (REMOTE) {
+    // 서버가 권한과 입력을 한 번 더 확인하고, 코드는 해시로만 저장한다
+    return remoteWrite('add_member', {
+      p_token: token,
+      p_name: name,
+      p_role: input.role,
+      p_position: position,
+      p_enlist_date: input.enlist_date,
+      p_discharge_date: input.discharge_date,
+    });
+  }
 
   const profile = {
     id: nextId(input.role === 'officer' ? 'o' : 'u', mockDb.profiles),
@@ -469,6 +540,7 @@ export function addMember(input, now = Date.now()) {
 export function reissueCode(userId, now = Date.now()) {
   const officer = requireOfficer();
   if (!officer) return { ok: false, reason: 'forbidden' };
+  if (REMOTE) return remoteWrite('reissue_code', { p_token: token, p_user_id: userId });
 
   const profile = mockDb.profiles.find((p) => p.id === userId && p.is_active);
   const auth = profile && mockAuth.find((a) => a.user_id === profile.id);
@@ -477,6 +549,13 @@ export function reissueCode(userId, now = Date.now()) {
   auth.code = newUniqueCode();
   writeAuditLog(officer, 'reissue_code', 'profiles', profile.id, now);
   return { ok: true, user: { ...profile }, code: auth.code };
+}
+
+// 서버에 쓰고, 성공하면 화면용 데이터를 다시 받는다
+async function remoteWrite(name, args) {
+  const result = await rpc(name, args);
+  if (result.ok) await loadState();
+  return result;
 }
 
 // ── 휴가 일수 (Phase 3-1) ───────────────────────────────────
@@ -923,6 +1002,7 @@ export const RATE_KINDS = ['total', 'leave'];
 const REQUEST_KINDS = ['leave', 'overnight', 'outing'];
 
 function activeSoldierCount() {
+  if (REMOTE && remoteSoldierCount !== null) return remoteSoldierCount;
   return mockDb.profiles.filter((p) => p.is_active && p.role === 'soldier').length;
 }
 
