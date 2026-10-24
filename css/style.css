@@ -1071,6 +1071,49 @@ body {
   color: #a12222;
 }
 
+/* 신청 종류 고르기: 휴가 / 외박 / 외출 */
+.apply-kinds {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.apply-kind {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 고른 종류: 그 종류 색 테두리·글자 + 옅은 배경 (색만이 아니라 굵기·배경으로도 구분) */
+.apply-kind[aria-pressed="true"] {
+  border: 2px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, var(--surface));
+}
+
+.apply-kind.type-leave[aria-pressed="true"] { color: var(--type-leave); }
+.apply-kind.type-overnight[aria-pressed="true"] { color: var(--type-overnight); }
+.apply-kind.type-outing[aria-pressed="true"] { color: var(--type-outing); }
+
+.apply-pass {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-weight: 600;
+}
+
+.apply-pass input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 /* 신청 달력: 남은 자리와 마감 (3-3) */
 .apply-seats {
   color: var(--text-muted);

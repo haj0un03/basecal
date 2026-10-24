@@ -18,6 +18,7 @@ import {
   getApplyWindow,
   getMyLeaveRequests,
   applyLeave,
+  applyAbsence,
   cancelLeaveRequest,
   getDayAvailability,
   getAbsenceRoster,
@@ -138,7 +139,6 @@ function soldierParts(redraw, user) {
 
   parts.push(...applyParts(redraw, user, leaveSummary));
   parts.push(...myRequestParts(redraw));
-  parts.push(placeholder('외박·외출 신청은 다음 단계(3-4)에서 만듭니다.'));
 
   // 받은 일수 요청 (포상휴가·위로휴가) + 상점 전환 요청
   const head = el('div', 'leave-sub-head');
@@ -430,12 +430,14 @@ function openPointsDialog(redraw) {
   });
 }
 
-// ── 병사: 달력으로 휴가 신청 ("휴가 계산기") ────────────────
+// ── 병사: 달력으로 휴가·외박·외출 신청 ("휴가 계산기") ────────────────
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const APPLY_ORDER = ['annual', 'reward', 'consolation'];
+const ABSENCE_KINDS = ['leave', 'overnight', 'outing'];
+const ABSENCE_KIND_LABELS = { leave: '휴가', overnight: '외박', outing: '외출' };
 
-// 신청 달력에서 보고 있는 달, 고른 출발일·복귀일, 종류별 일수. 다른 사람이 들어오면 처음으로.
+// 신청 달력에서 고른 종류(휴가·외박·외출), 보고 있는 달, 고른 출발일·복귀일, 종류별 일수. 다른 사람이 들어오면 처음으로.
 let applyState = null;
 
 function isoOf(year, month, day) {
@@ -470,29 +472,50 @@ function applyParts(redraw, user, summary) {
   const win = getApplyWindow();
   if (!applyState || applyState.userId !== user.id) {
     const [y, m] = win.start.split('-').map(Number);
-    applyState = { userId: user.id, year: y, month: m - 1, start: null, end: null, alloc: null, message: null };
+    applyState = { userId: user.id, kind: 'leave', year: y, month: m - 1, start: null, end: null, alloc: null, message: null };
   }
   const st = applyState;
   const remaining = Object.fromEntries(summary.map((x) => [x.leave_type, x.remaining]));
   const myActive = getMyLeaveRequests().filter((r) => r.status === 'requested');
-  const myLeaveOn = (iso) => myActive.find((r) => r.start_date <= iso && iso <= r.end_date);
+  const myAbsenceOn = (iso) => myActive.find((r) => r.start_date <= iso && iso <= r.end_date);
   // 보고 있는 달 중 신청할 수 있는 날짜의 남은 자리 (3-3)
   const monthFirst = isoOf(st.year, st.month, 1);
   const monthLast = isoOf(st.year, st.month, new Date(st.year, st.month + 1, 0).getDate());
   const seatStart = monthFirst > win.start ? monthFirst : win.start;
   const seatEnd = monthLast < win.end ? monthLast : win.end;
   const seats = Object.fromEntries(
-    (seatStart <= seatEnd ? getDayAvailability('leave', seatStart, seatEnd) : []).map((x) => [x.date, x]),
+    // 고른 종류의 남은 자리: 휴가는 휴가·총 출타 중 적은 쪽, 외박·외출은 총 출타
+    (seatStart <= seatEnd ? getDayAvailability(st.kind, seatStart, seatEnd) : []).map((x) => [x.date, x]),
   );
 
   const box = el('div', 'apply-box');
-  box.append(el('h3', 'apply-title', '휴가 신청'));
+  box.append(el('h3', 'apply-title', '출타 신청'));
   if (st.message) {
     const msg = el('p', 'apply-message', st.message);
     msg.setAttribute('role', 'status');
     msg.tabIndex = -1;
     box.append(msg);
   }
+
+  // 종류 고르기: 휴가 / 외박 / 외출. 바꾸면 고른 날짜를 지운다.
+  const kinds = el('div', 'apply-kinds');
+  kinds.setAttribute('role', 'group');
+  kinds.setAttribute('aria-label', '신청 종류');
+  ABSENCE_KINDS.forEach((kind) => {
+    const b = button(`apply-kind type-${kind}`, ABSENCE_KIND_LABELS[kind], null, () => {
+      if (st.kind === kind) return;
+      st.kind = kind;
+      st.start = null;
+      st.end = null;
+      st.alloc = null;
+      st.message = null;
+      redraw(`.apply-kind[data-kind="${kind}"]`);
+    });
+    b.dataset.kind = kind;
+    b.setAttribute('aria-pressed', String(st.kind === kind));
+    kinds.append(b);
+  });
+  box.append(kinds);
 
   // 달 넘기기 (신청할 수 있는 달만)
   const [minY, minM] = win.start.split('-').map(Number);
@@ -559,7 +582,7 @@ function applyParts(redraw, user, summary) {
       .forEach((r) => {
         const from = r.start_date > weekStart ? r.start_date : weekStart;
         const to = r.end_date < weekEnd ? r.end_date : weekEnd;
-        const bar = el('div', 'apply-bar type-leave', '휴가');
+        const bar = el('div', `apply-bar type-${r.kind}`, ABSENCE_KIND_LABELS[r.kind]);
         bar.style.gridColumn = `${days.indexOf(from) + 1} / ${days.indexOf(to) + 2}`;
         bar.dataset.start = from;
         bar.dataset.end = to;
@@ -572,10 +595,14 @@ function applyParts(redraw, user, summary) {
   }
 
   function applyDayCell(iso, col) {
-    const mine = myLeaveOn(iso);
+    const mine = myAbsenceOn(iso);
     const outside = iso < win.start || iso > win.end;
     const cell = button('apply-day', '', null, () => {
-      if (!st.start || st.end || iso < st.start) {
+      if (st.kind === 'outing') {
+        // 외출은 하루짜리라 한 번 누르면 끝
+        st.start = iso;
+        st.end = iso;
+      } else if (!st.start || st.end || iso < st.start) {
         st.start = iso;
         st.end = null;
       } else {
@@ -599,7 +626,7 @@ function applyParts(redraw, user, summary) {
     } else if (mine) {
       cell.disabled = true;
       cell.classList.add('mine');
-      label = ', 이미 신청한 휴가';
+      label = `, 이미 신청한 ${ABSENCE_KIND_LABELS[mine.kind]}`;
     } else if (seats[iso]?.full) {
       // 정원이 찬 날: 회색 "마감", 누를 수 없음
       cell.disabled = true;
@@ -615,7 +642,7 @@ function applyParts(redraw, user, summary) {
       cell.classList.add('in-range');
       if (iso === st.start) cell.classList.add('range-start');
       if (iso === end) cell.classList.add('range-end');
-      label += iso === st.start ? ', 출발일' : iso === end ? ', 복귀일' : ', 휴가 기간';
+      label += st.kind === 'outing' ? ', 외출일' : iso === st.start ? ', 출발일' : iso === end ? ', 복귀일' : ', 기간';
     }
     cell.setAttribute('aria-label', `${shortDay(iso)}${label}`);
     return cell;
@@ -624,11 +651,17 @@ function applyParts(redraw, user, summary) {
 
   // 안내 또는 기간과 종류별 일수
   if (!st.start) {
-    box.append(el('p', 'apply-guide', `출발일을 누르세요. 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날입니다.`));
+    const first = st.kind === 'outing' ? '외출할 날을 누르세요.' : '출발일을 누르세요.';
+    box.append(el('p', 'apply-guide', `${first} 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날입니다.`));
     return [box];
   }
   if (!st.end) {
     box.append(el('p', 'apply-guide', `출발일 ${shortDay(st.start)}. 이제 복귀일을 누르세요. (하루짜리면 같은 날을 한 번 더)`));
+    return [box];
+  }
+
+  if (st.kind !== 'leave') {
+    box.append(...absenceFormParts(redraw, st));
     return [box];
   }
 
@@ -707,15 +740,73 @@ function applyParts(redraw, user, summary) {
   return [box];
 }
 
-// 병사: 내 휴가 신청 내역 (취소 가능)
+
+// 외박·외출 신청 부분: 기간(또는 하루)과 포상 사용 여부
+function absenceFormParts(redraw, st) {
+  const kindLabel = ABSENCE_KIND_LABELS[st.kind];
+  const passType = st.kind === 'overnight' ? 'overnight_pass' : 'outing_pass';
+  const passLeft = getMyPassSummary().find((x) => x.type === passType)?.remaining ?? 0;
+  // 받침에 맞는 조사: 외박으로, 외출로
+  const ro = st.kind === 'outing' ? '로' : '으로';
+  const parts = [];
+  const range = el('p', 'apply-range');
+  if (st.kind === 'outing') {
+    range.append(el('strong', '', shortDay(st.start)), ' · 외출 (하루)');
+  } else {
+    range.append(el('strong', '', `${shortDay(st.start)} ~ ${shortDay(st.end)}`), ` · 외박 ${inclusiveDays(st.start, st.end)}일 (출발·복귀일 포함)`);
+  }
+  parts.push(range);
+
+  const form = el('form', 'apply-form');
+  form.noValidate = true;
+  const passRow = el('label', 'apply-pass');
+  const pass = document.createElement('input');
+  pass.type = 'checkbox';
+  pass.name = 'use_pass';
+  pass.disabled = passLeft < 1;
+  passRow.append(pass, ` 포상 ${kindLabel}${ro} 쓰기 (남은 ${passLeft}회)`);
+  form.append(passRow);
+  form.append(el('p', 'help', `${kindLabel}은 휴가 일수를 쓰지 않고, 총 출타 정원 안에서 나갑니다.${passLeft < 1 ? ` 남은 포상 ${kindLabel}이 없어 일반 ${kindLabel}${ro} 신청합니다.` : ''}`));
+  const error = el('p', 'form-error');
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  form.append(error);
+  const submit = el('button', 'primary-button', `${kindLabel} 신청하기`);
+  submit.type = 'submit';
+  submit.dataset.action = 'apply-absence';
+  const reset = button('secondary-button', '날짜 다시 고르기', 'apply-reset', () => {
+    st.start = null;
+    st.end = null;
+    redraw('.apply-title');
+  });
+  form.append(submit, reset);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const result = applyAbsence({ kind: st.kind, start_date: st.start, end_date: st.end, use_pass: pass.checked });
+    if (!result.ok) {
+      error.textContent = result.errors ? Object.values(result.errors).join(' ') : '신청할 수 없습니다.';
+      error.hidden = false;
+      return;
+    }
+    const when = st.kind === 'outing' ? shortDay(st.start) : `${shortDay(st.start)} ~ ${shortDay(st.end)}`;
+    st.message = `${when} ${pass.checked ? `포상 ${kindLabel}` : kindLabel}을 신청했습니다. 달력에도 표시됩니다.`;
+    st.start = null;
+    st.end = null;
+    redraw('.apply-message');
+  });
+  parts.push(form);
+  return parts;
+}
+
+// 병사: 내 출타 신청 내역 (휴가·외박·외출, 취소 가능)
 function myRequestParts(redraw) {
   const parts = [];
   const head = el('div', 'leave-sub-head');
-  head.append(el('h3', '', '내 휴가 신청 내역'));
+  head.append(el('h3', '', '내 출타 신청 내역'));
   parts.push(head);
-  const requests = getMyLeaveRequests().filter((r) => r.kind === 'leave');
+  const requests = getMyLeaveRequests();
   if (requests.length === 0) {
-    parts.push(el('p', 'cal-empty', '신청한 휴가가 없습니다.'));
+    parts.push(el('p', 'cal-empty', '신청한 출타가 없습니다.'));
     return parts;
   }
   const list = el('ul', 'grant-list request-list');
@@ -723,19 +814,32 @@ function myRequestParts(redraw) {
     const active = r.status === 'requested';
     const item = el('li', `grant-item request-${r.status}`);
     item.dataset.requestId = r.id;
-    const breakdown = r.items.map((x) => `${LEAVE_TYPE_LABELS[x.leave_type]} ${x.days}`).join(' + ');
+    const kindLabel = ABSENCE_KIND_LABELS[r.kind];
+    const when = r.start_date === r.end_date ? shortDay(r.start_date) : `${shortDay(r.start_date)} ~ ${shortDay(r.end_date)}`;
+    const meta =
+      r.kind === 'leave'
+        ? r.items.map((x) => `${LEAVE_TYPE_LABELS[x.leave_type]} ${x.days}`).join(' + ')
+        : r.reward_pass
+          ? `포상 ${kindLabel} 사용`
+          : `일반 ${kindLabel}`;
+    item.dataset.kind = r.kind;
     item.append(
       el('span', `status-badge ${active ? 'status-approved' : 'status-rejected'}`, active ? '신청' : '취소'),
-      el('span', 'grant-title', `${shortDay(r.start_date)} ~ ${shortDay(r.end_date)} · ${r.days}일`),
-      el('span', 'grant-meta', breakdown),
+      el('span', `type-badge type-${r.kind}`, kindLabel),
+      el('span', 'grant-title', r.kind === 'leave' ? `${when} · ${r.days}일` : when),
+      el('span', 'grant-meta', meta),
     );
     if (active) {
       const actions = el('span', 'grant-actions');
       actions.append(
         button('small-button danger', '취소', null, () => {
-          if (!window.confirm(`${shortDay(r.start_date)} ~ ${shortDay(r.end_date)} 휴가 신청을 취소할까요? 일수가 되돌아옵니다.`)) return;
+          const back = r.kind === 'leave' ? ' 일수가 되돌아옵니다.' : r.reward_pass ? ` 포상 ${kindLabel} 1회가 되돌아옵니다.` : '';
+          if (!window.confirm(`${when} ${kindLabel} 신청을 취소할까요?${back}`)) return;
           cancelLeaveRequest(r.id);
-          applyState.message = '휴가 신청을 취소했습니다. 일수가 되돌아왔습니다.';
+          applyState.message =
+            r.kind === 'leave'
+              ? '휴가 신청을 취소했습니다. 일수가 되돌아왔습니다.'
+              : `${kindLabel} 신청을 취소했습니다.${r.reward_pass ? ` 포상 ${kindLabel} 1회가 되돌아왔습니다.` : ''}`;
           redraw('.apply-message');
         }),
       );

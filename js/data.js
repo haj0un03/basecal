@@ -805,37 +805,36 @@ export function getMyLeaveRequests() {
     .sort((a, b) => (b.start_date ?? '').localeCompare(a.start_date ?? '') || b.id.localeCompare(a.id));
 }
 
+// 휴가·외박·외출 공통 날짜 확인. 문제가 있으면 안내 문구, 없으면 null.
+// 오늘부터 한 달 이내, 내 다른 출타와 겹치지 않음, 기간 안에 정원이 찬 날이 없음.
+function checkAbsenceDates(kind, start, end, now) {
+  const { start: windowStart, end: windowEnd } = getApplyWindow(now);
+  if (!isDate(start) || !isDate(end)) return '출발일과 복귀일을 고르세요.';
+  if (end < start) return '복귀일은 출발일과 같거나 뒤여야 합니다.';
+  if (start < windowStart || end > windowEnd) {
+    return `오늘부터 한 달 이내(${windowStart} ~ ${windowEnd})의 날짜만 신청할 수 있습니다.`;
+  }
+  // 이미 신청한 내 출타(휴가·외박·외출)와 날짜가 겹치면 막는다 (가정, current_status.md 참고)
+  const overlap = getMyLeaveRequests().find((r) => r.status === 'requested' && r.start_date <= end && r.end_date >= start);
+  if (overlap) return `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
+  // 기간 안에 정원이 찬 날이 하루라도 있으면 신청할 수 없다 (3-3). 휴가는 휴가·총 출타, 외박·외출은 총 출타 정원.
+  const full = fullDatesIn(kind, start, end);
+  if (full.length) {
+    return `마감된 날짜가 있어 신청할 수 없습니다: ${full.map((x) => `${Number(x.slice(5, 7))}/${Number(x.slice(8))}`).join(', ')}`;
+  }
+  return null;
+}
+
 // 병사만. input: { start_date, end_date, items: { annual, reward, consolation } }
 // 결과: { ok: true, request } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
 export function applyLeave(input, now = Date.now()) {
   const user = getCurrentUser();
   if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
-  const { start: windowStart, end: windowEnd } = getApplyWindow(now);
   const start = input.start_date;
   const end = input.end_date || start;
   const errors = {};
-
-  if (!isDate(start) || !isDate(end)) {
-    errors.dates = '출발일과 복귀일을 고르세요.';
-  } else if (end < start) {
-    errors.dates = '복귀일은 출발일과 같거나 뒤여야 합니다.';
-  } else if (start < windowStart || end > windowEnd) {
-    errors.dates = `오늘부터 한 달 이내(${windowStart} ~ ${windowEnd})의 날짜만 신청할 수 있습니다.`;
-  } else {
-    // 이미 신청한 내 출타와 날짜가 겹치면 막는다 (가정, current_status.md 참고)
-    const overlap = getMyLeaveRequests().find(
-      (r) => r.status === 'requested' && r.start_date <= end && r.end_date >= start,
-    );
-    if (overlap) {
-      errors.dates = `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
-    } else {
-      // 기간 안에 정원이 찬 날이 하루라도 있으면 신청할 수 없다 (3-3).
-      const full = fullDatesIn('leave', start, end);
-      if (full.length) {
-        errors.dates = `마감된 날짜가 있어 신청할 수 없습니다: ${full.map((x) => `${Number(x.slice(5, 7))}/${Number(x.slice(8))}`).join(', ')}`;
-      }
-    }
-  }
+  const dateError = checkAbsenceDates('leave', start, end, now);
+  if (dateError) errors.dates = dateError;
 
   const total = errors.dates ? 0 : inclusiveDays(start, end);
   const items = LEAVE_TYPES.map((type) => ({ leave_type: type, days: Number(input.items?.[type] ?? 0) }));
@@ -1096,4 +1095,66 @@ export function deleteRatePeriod(id, now = Date.now()) {
 // 신청하려는 기간 중 더 신청할 수 없는 날짜 (applyLeave에서 쓴다)
 function fullDatesIn(requestKind, start, end) {
   return datesBetween(start, end).filter((date) => slotOn(requestKind, date).full);
+}
+
+// ── 외박·외출 신청 (Phase 3-4) ──────────────────────────────
+// 외박·외출은 휴가 일수를 쓰지 않고, 따로 출타율 없이 총 출타 정원 안에서만 나간다.
+// 외출은 하루짜리다 (가정). 외박은 기간을 고른다. 횟수 제한은 없다 (가정, prd.md 11번 확인 항목).
+// 포상 외박·외출이 남아 있으면 "포상으로 쓰기"를 고를 수 있고, 그러면 1회 차감된다 (reward_pass).
+
+const ABSENCE_LABELS = { overnight: '외박', outing: '외출' };
+
+// 병사만. input: { kind: 'overnight' | 'outing', start_date, end_date, use_pass }
+// 결과: { ok: true, request } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function applyAbsence(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
+  const kind = input.kind;
+  const errors = {};
+  if (!['overnight', 'outing'].includes(kind)) {
+    return { ok: false, reason: 'invalid', errors: { kind: '외박인지 외출인지 고르세요.' } };
+  }
+  const start = input.start_date;
+  const end = kind === 'outing' ? start : input.end_date || start;
+  if (kind === 'outing' && input.end_date && input.end_date !== start) {
+    errors.dates = '외출은 하루만 신청할 수 있습니다.';
+  } else {
+    const dateError = checkAbsenceDates(kind, start, end, now);
+    if (dateError) errors.dates = dateError;
+  }
+  const usePass = Boolean(input.use_pass);
+  if (usePass) {
+    const passType = kind === 'overnight' ? 'overnight_pass' : 'outing_pass';
+    const left = getMyPassSummary().find((x) => x.type === passType)?.remaining ?? 0;
+    if (left < 1) errors.use_pass = `남은 포상 ${ABSENCE_LABELS[kind]}이 없습니다.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const event = {
+    id: nextId('e', mockDb.events),
+    type: kind,
+    title: ABSENCE_LABELS[kind],
+    start_date: start,
+    end_date: end,
+    time: null,
+    author_id: user.id,
+    memo: '',
+    repeat_yearly: false,
+    unit_category: null,
+  };
+  mockDb.events.push(event);
+  const request = {
+    id: nextId('r', mockDb.leave_requests),
+    user_id: user.id,
+    kind,
+    event_id: event.id,
+    start_date: start,
+    end_date: end,
+    status: 'requested',
+    requested_at: new Date(now).toISOString(),
+    cancelled_at: null,
+    reward_pass: usePass,
+  };
+  mockDb.leave_requests.push(request);
+  return { ok: true, request: requestView(request) };
 }
