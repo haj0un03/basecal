@@ -131,9 +131,9 @@ export function getDemoAccounts() {
 // ── 달력 일정 ──────────────────────────────────────────────
 // 내 달력에는 부대 일정(모두 같은 한 건을 함께 본다)과 내가 쓴 일정이 보인다.
 
-// 개인 일정의 종류: 근무(duty), 생일(personal + 매년 반복), 기타(personal)
-// 생일은 항상 매년 반복한다 (가정, current_status.md 참고).
-const PERSONAL_KINDS = ['duty', 'birthday', 'other'];
+// 개인 일정의 종류: 근무(duty), 기타(personal)
+// 생일 종류는 2026-10-24 사용자 요청으로 뺐다. (매년 반복 일정을 보여 주는 코드는 남겨 둔다)
+const PERSONAL_KINDS = ['duty', 'other'];
 const MAX_TITLE_LENGTH = 30;
 const MAX_MEMO_LENGTH = 200;
 
@@ -178,7 +178,7 @@ function yearlyOccurrences(event, start, end) {
 }
 
 // start, end: 'YYYY-MM-DD'. 그 기간에 하루라도 걸치는 일정을 돌려준다.
-// 부대 일정은 모두에게, 개인 일정(근무·생일·기타)은 쓴 사람에게만 보인다.
+// 부대 일정은 모두에게, 개인 일정(근무·기타)은 쓴 사람에게만 보인다.
 export function getCalendarEvents(start, end) {
   const user = getCurrentUser();
   if (!user) return [];
@@ -206,8 +206,7 @@ function validatePersonalEvent(input) {
   const memo = String(input.memo ?? '').trim();
   const time = String(input.time ?? '').trim();
   const startDate = input.start_date;
-  // 생일은 하루짜리다.
-  const endDate = kind === 'birthday' ? startDate : input.end_date || startDate;
+  const endDate = input.end_date || startDate;
   const errors = {};
 
   if (!PERSONAL_KINDS.includes(kind)) errors.kind = '종류를 고르세요.';
@@ -233,7 +232,7 @@ function validatePersonalEvent(input) {
     end_date: endDate,
     time: time || null,
     memo,
-    repeat_yearly: kind === 'birthday',
+    repeat_yearly: false,
   };
   return { errors, fields };
 }

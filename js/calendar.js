@@ -22,7 +22,7 @@ const TYPE_LABELS = {
   reservation: '시설',
 };
 const CATEGORY_LABELS = { training: '훈련', inspection: '점검', event: '행사', other: '기타' };
-// 개인 일정은 종류(근무·생일·기타)로 글자를 붙인다.
+// 개인 일정은 종류(근무·기타)로 글자를 붙인다.
 const KIND_LABELS = { duty: '근무', birthday: '생일', other: '개인' };
 
 function badgeText(e) {
@@ -30,8 +30,17 @@ function badgeText(e) {
 }
 // 한 주 줄에 보여 줄 막대 줄 수. 넘치면 날짜 칸에 +N으로 표시한다.
 const MAX_LANES = 2;
-// 필터 버튼 순서 (prd.md 4번의 일정 종류 7가지). 생일·기타는 "개인"에 들어간다.
-const FILTER_TYPES = ['personal', 'duty', 'unit', 'leave', 'overnight', 'outing', 'reservation'];
+// 필터는 세 묶음으로 켜고 끈다 (2026-10-24 사용자 요청).
+// 부대: 부대 일정 / 출타: 휴가·외박·외출 / 기타: 개인 일정·근무·시설 예약
+const FILTER_GROUPS = [
+  { key: 'unit', label: '부대', types: ['unit'] },
+  { key: 'absence', label: '출타', types: ['leave', 'overnight', 'outing'] },
+  { key: 'other', label: '기타', types: ['personal', 'duty', 'reservation'] },
+];
+
+function filterGroupOf(type) {
+  return FILTER_GROUPS.find((g) => g.types.includes(type))?.key ?? 'other';
+}
 
 // 보고 있는 달과 고른 날짜. 다른 사람이 들어오면 처음(오늘)으로 돌린다.
 let state = null;
@@ -116,9 +125,9 @@ export function renderCalendar(container, user, today = new Date()) {
   const lastISO = toISODate(last);
   const allEvents = getCalendarEvents(firstISO, lastISO);
   // 필터로 끈 종류는 달력 막대와 목록에서 모두 뺀다.
-  const events = allEvents.filter((e) => !state.hidden.has(e.type));
+  const events = allEvents.filter((e) => !state.hidden.has(filterGroupOf(e.type)));
   const eventsOn = (iso) => events.filter((e) => e.start_date <= iso && iso <= e.end_date);
-  const hiddenOn = (iso) => allEvents.filter((e) => state.hidden.has(e.type) && e.start_date <= iso && iso <= e.end_date);
+  const hiddenOn = (iso) => allEvents.filter((e) => state.hidden.has(filterGroupOf(e.type)) && e.start_date <= iso && iso <= e.end_date);
 
   // 전역 D-day
   const dday = el('p', 'dday');
@@ -185,18 +194,19 @@ export function renderCalendar(container, user, today = new Date()) {
     panel.setAttribute('aria-label', '보여 줄 일정 종류');
     // 목록 안을 눌러도 바깥 누르기로 처리되어 닫히지 않게 한다.
     panel.addEventListener('click', (e) => e.stopPropagation());
-    FILTER_TYPES.forEach((type) => {
-      const option = el('label', `filter-option type-${type}`);
+    FILTER_GROUPS.forEach(({ key, label, types }) => {
+      // 색 점은 그 묶음의 대표 종류 색을 쓴다.
+      const option = el('label', `filter-option type-${types[0]}`);
       const box = document.createElement('input');
       box.type = 'checkbox';
-      box.checked = !state.hidden.has(type);
-      box.dataset.filter = type;
+      box.checked = !state.hidden.has(key);
+      box.dataset.filter = key;
       box.addEventListener('change', () => {
-        if (box.checked) state.hidden.delete(type);
-        else state.hidden.add(type);
-        draw(`[data-filter="${type}"]`);
+        if (box.checked) state.hidden.delete(key);
+        else state.hidden.add(key);
+        draw(`[data-filter="${key}"]`);
       });
-      option.append(box, el('span', 'filter-dot'), el('span', 'filter-label', TYPE_LABELS[type]));
+      option.append(box, el('span', 'filter-dot'), el('span', 'filter-label', label));
       panel.append(option);
     });
     const showAll = el('button', 'small-button filter-show-all', '모두 보기');
@@ -205,7 +215,7 @@ export function renderCalendar(container, user, today = new Date()) {
     showAll.disabled = hiddenTypes === 0;
     showAll.addEventListener('click', () => {
       state.hidden.clear();
-      draw(`[data-filter="${FILTER_TYPES[0]}"]`);
+      draw(`[data-filter="${FILTER_GROUPS[0].key}"]`);
     });
     panel.append(showAll);
     filterBar.append(panel);
@@ -417,7 +427,6 @@ function openEventDialog({ event = null, date = null }) {
         <legend class="field-label">종류</legend>
         <div class="choice-row">
           <label class="choice"><input type="radio" name="kind" value="duty"> 근무</label>
-          <label class="choice"><input type="radio" name="kind" value="birthday"> 생일</label>
           <label class="choice"><input type="radio" name="kind" value="other"> 기타</label>
         </div>
         <span class="field-error" data-error-for="kind" hidden></span>
@@ -425,7 +434,6 @@ function openEventDialog({ event = null, date = null }) {
       ${field('title', '제목', '<input name="title" maxlength="30" required>')}
       ${field('start_date', '시작 날짜', '<input name="start_date" type="date" required>')}
       ${field('end_date', '끝나는 날짜 (하루면 비워 두기)', '<input name="end_date" type="date">')}
-      <p class="help birthday-help" hidden>생일은 매년 같은 날에 표시됩니다.</p>
       ${field('time', '시간 (선택)', '<input name="time" type="time">')}
       ${field('memo', '메모 (선택)', '<textarea name="memo" rows="2" maxlength="200"></textarea>')}
       <p class="form-error" role="alert" hidden></p>
@@ -436,7 +444,8 @@ function openEventDialog({ event = null, date = null }) {
 
   const form = eventDialog.querySelector('form');
   const f = form.elements;
-  const kind = event?.kind ?? 'other';
+  // 예전에 만든 생일 일정을 고칠 때는 기타로 다룬다.
+  const kind = event?.kind === 'duty' ? 'duty' : 'other';
   form.querySelector(`input[name="kind"][value="${kind}"]`).checked = true;
   f.title.value = event?.title ?? '';
   // 매년 반복 일정은 처음 등록한 날짜를 고친다.
@@ -444,16 +453,6 @@ function openEventDialog({ event = null, date = null }) {
   f.end_date.value = event && event.end_date !== event.start_date ? event.end_date : '';
   f.time.value = event?.time ?? '';
   f.memo.value = event?.memo ?? '';
-
-  // 생일은 하루짜리라 끝나는 날짜를 숨긴다.
-  const syncKind = () => {
-    const isBirthday = f.kind.value === 'birthday';
-    form.querySelector('[data-field="end_date"]').hidden = isBirthday;
-    form.querySelector('.birthday-help').hidden = !isBirthday;
-    form.querySelector('[data-field="start_date"] .field-label').textContent = isBirthday ? '날짜' : '시작 날짜';
-  };
-  form.querySelectorAll('input[name="kind"]').forEach((radio) => radio.addEventListener('change', syncKind));
-  syncKind();
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -472,8 +471,8 @@ function openEventDialog({ event = null, date = null }) {
 
     if (result.ok) {
       eventDialog.close();
-      // 생일이 아니면 저장한 일정의 시작 날짜를 보여 준다.
-      if (state && input.kind !== 'birthday') {
+      // 저장한 일정의 시작 날짜를 보여 준다.
+      if (state) {
         const [y, m] = result.event.start_date.split('-').map(Number);
         state.year = y;
         state.month = m - 1;
