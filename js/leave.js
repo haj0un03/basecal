@@ -783,8 +783,8 @@ function quotaLine(iso) {
   const q = getMyAbsenceQuota(iso);
   const line = el('p', 'apply-quota');
   line.append(
-    el('span', '', `${q.quarter.label}: 외박 ${q.quarter.overnight}/${q.limits.overnight} · 주말 외출 ${q.quarter.weekendOuting}/${q.limits.weekendOuting} (둘 중 한 종류만)`),
-    el('span', '', `${q.month.label}: 평일 외출 ${q.month.weekdayOuting}/${q.limits.weekdayOuting}`),
+    el('span', '', `${q.quarter.label}: 외박 ${q.quarter.overnight}/${q.limits.overnight} · 주말 외출 ${q.quarter.weekendOuting}/${q.limits.weekendOuting}`),
+    el('span', '', `${q.month.label}: 외박·주말 외출 ${q.month.weekend}/${q.limits.weekend} · 평일 외출 ${q.month.weekdayOuting}/${q.limits.weekdayOuting}`),
   );
   return line;
 }

@@ -7,6 +7,7 @@ import {
   OVERNIGHT_PER_QUARTER,
   WEEKEND_OUTING_PER_QUARTER,
   WEEKDAY_OUTING_PER_MONTH,
+  WEEKEND_ABSENCE_PER_MONTH,
 } from './settings.js';
 
 const MAX_FAILURES = 5;
@@ -1108,7 +1109,8 @@ function fullDatesIn(requestKind, start, end) {
 // 규칙 (2026-10-24 사용자 확정, 숫자는 js/settings.js):
 // - 외출은 하루짜리. 토·일이면 주말 외출, 월~금이면 평일 외출
 // - 외박은 토요일 출발 → 일요일 복귀(1박 2일)만
-// - 한 분기(달력 기준 1~3월…)에 외박 1회, 주말 외출 2회. 단 한 분기에 둘 중 한 종류만 쓸 수 있다
+// - 한 분기(달력 기준 1~3월…)에 외박 1회, 주말 외출 2회. 단 한 달에는 외박·주말 외출 중 1개만 쓸 수 있다
+//   (예: 10월 외박, 11월 주말 외출, 12월 주말 외출. 2026-10-24 사용자 정정)
 // - 한 달(1일~말일)에 평일 외출 2회
 // - 포상 외박·외출이 남아 있으면 "포상으로 쓰기"를 고를 수 있고, 그러면 포상 1회가 차감되고 위 횟수에는 들어가지 않는다
 
@@ -1148,7 +1150,7 @@ function monthRange(iso) {
 }
 
 // 그 날짜가 속한 분기·달에 내가 쓴 외박·외출 횟수 (포상으로 쓴 것과 취소한 것은 빼고 센다)
-// 결과: { quarter: { label, overnight, weekendOuting }, month: { label, weekdayOuting }, limits: {...} }
+// 결과: { quarter: { label, overnight, weekendOuting }, month: { label, weekend, weekdayOuting }, limits: {...} }
 export function getMyAbsenceQuota(iso) {
   const user = getCurrentUser();
   if (!user || user.role !== 'soldier') return null;
@@ -1164,9 +1166,16 @@ export function getMyAbsenceQuota(iso) {
     },
     month: {
       label: mo.label,
+      // 그 달의 외박 + 주말 외출
+      weekend: mine.filter((r) => (r.kind === 'overnight' || isWeekend(r.start_date)) && inRange(r, mo)).length,
       weekdayOuting: mine.filter((r) => r.kind === 'outing' && !isWeekend(r.start_date) && inRange(r, mo)).length,
     },
-    limits: { overnight: OVERNIGHT_PER_QUARTER, weekendOuting: WEEKEND_OUTING_PER_QUARTER, weekdayOuting: WEEKDAY_OUTING_PER_MONTH },
+    limits: {
+      overnight: OVERNIGHT_PER_QUARTER,
+      weekendOuting: WEEKEND_OUTING_PER_QUARTER,
+      weekend: WEEKEND_ABSENCE_PER_MONTH,
+      weekdayOuting: WEEKDAY_OUTING_PER_MONTH,
+    },
   };
 }
 
@@ -1174,18 +1183,12 @@ export function getMyAbsenceQuota(iso) {
 function checkAbsenceQuota(kind, start) {
   const quota = getMyAbsenceQuota(start);
   const { quarter, month, limits } = quota;
-  if (kind === 'overnight') {
-    if (quarter.weekendOuting > 0) {
-      return `이번 분기(${quarter.label})에 주말 외출을 써서 외박은 쓸 수 없습니다. 한 분기에 외박과 주말 외출 중 한 종류만 쓸 수 있습니다.`;
+  if (kind === 'overnight' || isWeekend(start)) {
+    if (kind === 'overnight' && quarter.overnight >= limits.overnight) return `이번 분기(${quarter.label}) 외박 ${limits.overnight}회를 이미 썼습니다.`;
+    if (kind === 'outing' && quarter.weekendOuting >= limits.weekendOuting) return `이번 분기(${quarter.label}) 주말 외출 ${limits.weekendOuting}회를 모두 썼습니다.`;
+    if (month.weekend >= limits.weekend) {
+      return `${month.label}에 이미 외박이나 주말 외출을 썼습니다. 외박·주말 외출은 한 달에 ${limits.weekend}개만 쓸 수 있습니다.`;
     }
-    if (quarter.overnight >= limits.overnight) return `이번 분기(${quarter.label}) 외박 ${limits.overnight}회를 이미 썼습니다.`;
-    return null;
-  }
-  if (isWeekend(start)) {
-    if (quarter.overnight > 0) {
-      return `이번 분기(${quarter.label})에 외박을 써서 주말 외출은 쓸 수 없습니다. 한 분기에 외박과 주말 외출 중 한 종류만 쓸 수 있습니다.`;
-    }
-    if (quarter.weekendOuting >= limits.weekendOuting) return `이번 분기(${quarter.label}) 주말 외출 ${limits.weekendOuting}회를 모두 썼습니다.`;
     return null;
   }
   if (month.weekdayOuting >= limits.weekdayOuting) return `${month.label} 평일 외출 ${limits.weekdayOuting}회를 모두 썼습니다.`;
