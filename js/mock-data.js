@@ -18,6 +18,9 @@
 //   given_points: 간부가 처음 준 점수. 벌점은 상점을 0점까지만 깎으므로 points보다 클 수 있다.
 //   남은 상점 = points 합계 (저장하지 않고 매번 계산). 점수는 모두 가상 값이다.
 // - leave_requests.kind: leave(휴가), overnight(외박), outing(외출) / status: requested(신청), cancelled(취소)
+// - leave_settings: 기본 출타율(%). kind별 가장 최근 값을 쓴다 (가상 값: 휴가 20%, 외박·외출 10%)
+// - leave_rate_periods: 기간별 출타율. 그 기간에는 기본 출타율 대신 이 값을 쓴다
+// - 가상 휴가 신청: 11/12~13에 4명(정원 4명이라 마감), 11/5~6에 1명
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
 
 export const mockDb = {
@@ -257,6 +260,66 @@ export const mockDb = {
       "memo": "",
       "repeat_yearly": false,
       "unit_category": "training"
+    },
+    {
+      "id": "e04",
+      "type": "leave",
+      "title": "휴가",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "time": null,
+      "author_id": "u05",
+      "memo": "",
+      "repeat_yearly": false,
+      "unit_category": null
+    },
+    {
+      "id": "e05",
+      "type": "leave",
+      "title": "휴가",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "time": null,
+      "author_id": "u06",
+      "memo": "",
+      "repeat_yearly": false,
+      "unit_category": null
+    },
+    {
+      "id": "e06",
+      "type": "leave",
+      "title": "휴가",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "time": null,
+      "author_id": "u07",
+      "memo": "",
+      "repeat_yearly": false,
+      "unit_category": null
+    },
+    {
+      "id": "e07",
+      "type": "leave",
+      "title": "휴가",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "time": null,
+      "author_id": "u08",
+      "memo": "",
+      "repeat_yearly": false,
+      "unit_category": null
+    },
+    {
+      "id": "e08",
+      "type": "leave",
+      "title": "휴가",
+      "start_date": "2026-11-05",
+      "end_date": "2026-11-06",
+      "time": null,
+      "author_id": "u10",
+      "memo": "",
+      "repeat_yearly": false,
+      "unit_category": null
     }
   ],
   "leave_grants": [
@@ -615,9 +678,113 @@ export const mockDb = {
       "created_at": "2026-10-17T09:00:00.000Z"
     }
   ],
-  "leave_requests": [],
-  "leave_request_items": [],
-  "leave_settings": [],
+  "leave_requests": [
+    {
+      "id": "r01",
+      "user_id": "u05",
+      "kind": "leave",
+      "event_id": "e04",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "status": "requested",
+      "requested_at": "2026-10-20T09:00:00.000Z",
+      "cancelled_at": null
+    },
+    {
+      "id": "r02",
+      "user_id": "u06",
+      "kind": "leave",
+      "event_id": "e05",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "status": "requested",
+      "requested_at": "2026-10-20T09:00:00.000Z",
+      "cancelled_at": null
+    },
+    {
+      "id": "r03",
+      "user_id": "u07",
+      "kind": "leave",
+      "event_id": "e06",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "status": "requested",
+      "requested_at": "2026-10-20T09:00:00.000Z",
+      "cancelled_at": null
+    },
+    {
+      "id": "r04",
+      "user_id": "u08",
+      "kind": "leave",
+      "event_id": "e07",
+      "start_date": "2026-11-12",
+      "end_date": "2026-11-13",
+      "status": "requested",
+      "requested_at": "2026-10-20T09:00:00.000Z",
+      "cancelled_at": null
+    },
+    {
+      "id": "r05",
+      "user_id": "u10",
+      "kind": "leave",
+      "event_id": "e08",
+      "start_date": "2026-11-05",
+      "end_date": "2026-11-06",
+      "status": "requested",
+      "requested_at": "2026-10-21T09:00:00.000Z",
+      "cancelled_at": null
+    }
+  ],
+  "leave_request_items": [
+    {
+      "request_id": "r01",
+      "leave_type": "annual",
+      "days": 2
+    },
+    {
+      "request_id": "r02",
+      "leave_type": "annual",
+      "days": 2
+    },
+    {
+      "request_id": "r03",
+      "leave_type": "annual",
+      "days": 2
+    },
+    {
+      "request_id": "r04",
+      "leave_type": "annual",
+      "days": 2
+    },
+    {
+      "request_id": "r05",
+      "leave_type": "annual",
+      "days": 2
+    }
+  ],
+  "leave_settings": [
+    {
+      "id": "s01",
+      "kind": "leave",
+      "rate": 20,
+      "updated_by": "o01",
+      "updated_at": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "s02",
+      "kind": "overnight",
+      "rate": 10,
+      "updated_by": "o01",
+      "updated_at": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "s03",
+      "kind": "outing",
+      "rate": 10,
+      "updated_by": "o01",
+      "updated_at": "2026-10-01T09:00:00.000Z"
+    }
+  ],
   "leave_rate_periods": [],
   "facilities": [
     {

@@ -1071,6 +1071,89 @@ body {
   color: #a12222;
 }
 
+/* 신청 달력: 남은 자리와 마감 (3-3) */
+.apply-seats {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.apply-day.full {
+  background: var(--bg);
+}
+
+.apply-day.full .apply-num {
+  color: var(--text-muted);
+}
+
+.apply-day.full .apply-seats {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.apply-day.in-range .apply-seats {
+  color: var(--type-leave);
+}
+
+/* 간부: 출타율 */
+.rate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rate-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rate-kind {
+  width: 3em;
+  font-weight: 600;
+}
+
+.rate-row input {
+  width: 64px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 16px;
+  text-align: center;
+}
+
+.rate-capacity {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.quota-badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.quota-badge.full {
+  background: var(--text-muted);
+}
+
+.quota-badge.over {
+  background: #a12222;
+}
+
+.roster-item.over {
+  border-left: 4px solid #a12222;
+}
+
+.over-note {
+  color: #a12222;
+}
+
 /* 로그인 화면 */
 body.signed-out .user-area,
 body.signed-out .tabbar {

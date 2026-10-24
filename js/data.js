@@ -757,7 +757,7 @@ export function requestMeritConversion(input, now = Date.now()) {
 // ── 휴가 신청 (Phase 3-2) ───────────────────────────────────
 // 신청은 간부 승인 없이 바로 등록되고, 그 순간 남은 일수에서 빠진다.
 // 오늘부터 한 달 이내의 날짜만 신청할 수 있다. 휴가 일수는 출발일·복귀일을 모두 센다(주말 포함).
-// 정원(출타율) 확인은 3-3에서 붙인다.
+// 기간 안에 정원이 찬 날이 있으면 신청할 수 없다 (3-3, 아래 fullDatesIn).
 
 function localISO(date) {
   const y = date.getFullYear();
@@ -827,7 +827,15 @@ export function applyLeave(input, now = Date.now()) {
     const overlap = getMyLeaveRequests().find(
       (r) => r.status === 'requested' && r.start_date <= end && r.end_date >= start,
     );
-    if (overlap) errors.dates = `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
+    if (overlap) {
+      errors.dates = `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
+    } else {
+      // 기간 안에 정원이 찬 날이 하루라도 있으면 신청할 수 없다 (3-3).
+      const full = fullDatesIn('leave', start, end);
+      if (full.length) {
+        errors.dates = `마감된 날짜가 있어 신청할 수 없습니다: ${full.map((x) => `${Number(x.slice(5, 7))}/${Number(x.slice(8))}`).join(', ')}`;
+      }
+    }
   }
 
   const total = errors.dates ? 0 : inclusiveDays(start, end);
@@ -895,4 +903,162 @@ export function cancelLeaveRequest(id, now = Date.now()) {
   const eventIndex = mockDb.events.findIndex((e) => e.id === request.event_id);
   if (eventIndex >= 0) mockDb.events.splice(eventIndex, 1);
   return { ok: true, request: requestView(request) };
+}
+
+// ── 출타율과 정원 (Phase 3-3) ───────────────────────────────
+// 하루 정원 = 부대 전체 활성 병사 수 × 출타율, 소수점 버림. 휴가·외박·외출은 따로 계산한다.
+// 기간별 출타율이 있는 날짜는 기본 출타율 대신 그 값을 쓴다. 겹치면 더 낮은 값을 쓴다 (가정).
+// 날짜별 남은 자리 = 정원 − 그 날짜에 걸친 신청 인원. 저장하지 않고 매번 계산한다.
+
+export const LEAVE_KINDS = ['leave', 'overnight', 'outing'];
+const KIND_LABELS = { leave: '휴가', overnight: '외박', outing: '외출' };
+
+function activeSoldierCount() {
+  return mockDb.profiles.filter((p) => p.is_active && p.role === 'soldier').length;
+}
+
+function defaultRate(kind) {
+  const rows = mockDb.leave_settings.filter((r) => r.kind === kind);
+  return rows.length ? rows[rows.length - 1].rate : null;
+}
+
+function rateOn(kind, iso) {
+  const periods = mockDb.leave_rate_periods.filter((p) => p.kind === kind && p.start_date <= iso && iso <= p.end_date);
+  if (periods.length) return Math.min(...periods.map((p) => p.rate));
+  return defaultRate(kind);
+}
+
+// 출타율이 정해지지 않았으면 정원 제한이 없다(null).
+function capacityOn(kind, iso) {
+  const rate = rateOn(kind, iso);
+  return rate === null ? null : Math.floor((activeSoldierCount() * rate) / 100);
+}
+
+function requestsOn(kind, iso) {
+  return mockDb.leave_requests.filter(
+    (r) => r.kind === kind && r.status === 'requested' && r.start_date <= iso && iso <= r.end_date,
+  );
+}
+
+function datesBetween(start, end) {
+  const dates = [];
+  const [y, m, d] = start.split('-').map(Number);
+  for (let date = new Date(y, m - 1, d); localISO(date) <= end; date.setDate(date.getDate() + 1)) {
+    dates.push(localISO(date));
+  }
+  return dates;
+}
+
+// 날짜별 자리. 결과: [{ date, rate, capacity, count, remaining, full, over }]
+// full: 새 신청을 받을 수 없음(남은 자리 0 이하), over: 이미 정원을 넘음(출타율을 낮춘 경우)
+export function getDayAvailability(kind, start, end) {
+  if (!getCurrentUser()) return [];
+  return datesBetween(start, end).map((date) => {
+    const capacity = capacityOn(kind, date);
+    const count = requestsOn(kind, date).length;
+    const remaining = capacity === null ? null : capacity - count;
+    return {
+      date,
+      rate: rateOn(kind, date),
+      capacity,
+      count,
+      remaining,
+      full: remaining !== null && remaining <= 0,
+      over: remaining !== null && remaining < 0,
+    };
+  });
+}
+
+// 간부만. 날짜별 출타 인원과 명단. 결과: [{ ...자리 정보, people: [{ name, position }] }]
+export function getLeaveRoster(kind, start, end) {
+  if (!requireOfficer()) return [];
+  return getDayAvailability(kind, start, end).map((day) => ({
+    ...day,
+    people: requestsOn(kind, day.date)
+      .map((r) => mockDb.profiles.find((p) => p.id === r.user_id))
+      .filter(Boolean)
+      .map((p) => ({ name: p.name, position: p.position }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko')),
+  }));
+}
+
+// 출타율 설정 보기 (간부 화면용). 결과: { soldiers, defaults: { leave, overnight, outing }, periods: [...] }
+export function getRateSettings() {
+  if (!requireOfficer()) return null;
+  return {
+    soldiers: activeSoldierCount(),
+    defaults: Object.fromEntries(LEAVE_KINDS.map((k) => [k, defaultRate(k)])),
+    periods: mockDb.leave_rate_periods
+      .map((p) => ({ ...p }))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id)),
+  };
+}
+
+function validRate(value) {
+  // 빈칸은 0%로 보지 않는다 (실수로 지우고 저장하면 모든 날이 마감되므로).
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const rate = Number(value);
+  return Number.isInteger(rate) && rate >= 0 && rate <= 100 ? rate : null;
+}
+
+// 간부만. 기본 출타율 바꾸기. 결과: { ok: true } 또는 { ok: false, reason, errors }
+export function setDefaultRate(kind, value, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const rate = validRate(value);
+  if (!LEAVE_KINDS.includes(kind) || rate === null) {
+    return { ok: false, reason: 'invalid', errors: { [kind]: '출타율은 0~100 사이의 정수로 입력하세요.' } };
+  }
+  const row = { id: nextId('s', mockDb.leave_settings), kind, rate, updated_by: officer.id, updated_at: new Date(now).toISOString() };
+  mockDb.leave_settings.push(row);
+  writeAuditLog(officer, 'set_leave_rate', 'leave_settings', row.id, now);
+  return { ok: true };
+}
+
+// 간부만. 기간별 출타율 넣기. input: { kind, start_date, end_date, rate }
+export function addRatePeriod(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const end = input.end_date || input.start_date;
+  const rate = validRate(input.rate);
+  const errors = {};
+  if (!LEAVE_KINDS.includes(input.kind)) errors.kind = '종류를 고르세요.';
+  if (!isDate(input.start_date)) errors.start_date = '시작 날짜를 입력하세요.';
+  else if (!isDate(end) || end < input.start_date) errors.end_date = '끝나는 날짜는 시작 날짜와 같거나 뒤여야 합니다.';
+  if (rate === null) errors.rate = '출타율은 0~100 사이의 정수로 입력하세요.';
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  const row = {
+    id: nextId('p', mockDb.leave_rate_periods),
+    kind: input.kind,
+    start_date: input.start_date,
+    end_date: end,
+    rate,
+    created_by: officer.id,
+    created_at: new Date(now).toISOString(),
+  };
+  mockDb.leave_rate_periods.push(row);
+  writeAuditLog(officer, 'add_rate_period', 'leave_rate_periods', row.id, now);
+  return { ok: true, period: { ...row } };
+}
+
+export function deleteRatePeriod(id, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const index = mockDb.leave_rate_periods.findIndex((p) => p.id === id);
+  if (index < 0) return { ok: false, reason: 'not_found' };
+  mockDb.leave_rate_periods.splice(index, 1);
+  writeAuditLog(officer, 'delete_rate_period', 'leave_rate_periods', id, now);
+  return { ok: true };
+}
+
+// 신청하려는 기간 중 마감된 날짜 (applyLeave에서 쓴다)
+function fullDatesIn(kind, start, end) {
+  return datesBetween(start, end).filter((date) => {
+    const capacity = capacityOn(kind, date);
+    return capacity !== null && requestsOn(kind, date).length >= capacity;
+  });
+}
+
+export function kindLabel(kind) {
+  return KIND_LABELS[kind];
 }

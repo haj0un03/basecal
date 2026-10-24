@@ -1,7 +1,7 @@
 // 신청 탭 휴가 영역
 // - 병사: 휴가 종류별·상점·포상 외박/외출 현황, 달력으로 휴가 신청·취소, 받은 일수 요청(포상·위로),
 //   상점 → 포상휴가·포상 외박·포상 외출 전환 요청, 상점·벌점 내역
-// - 간부: 받은 일수·상점 전환 승인·반려, 상점·벌점 주기
+// - 간부: 받은 일수·상점 전환 승인·반려, 상점·벌점 주기, 출타율(기본·기간별)과 날짜별 출타 현황
 import {
   getMyLeaveSummary,
   getMyLeaveGrants,
@@ -19,6 +19,12 @@ import {
   getMyLeaveRequests,
   applyLeave,
   cancelLeaveRequest,
+  getDayAvailability,
+  getLeaveRoster,
+  getRateSettings,
+  setDefaultRate,
+  addRatePeriod,
+  deleteRatePeriod,
 } from './data.js';
 import { MAX_POINTS_PER_ENTRY } from './settings.js';
 
@@ -132,7 +138,7 @@ function soldierParts(redraw, user) {
 
   parts.push(...applyParts(redraw, user, leaveSummary));
   parts.push(...myRequestParts(redraw));
-  parts.push(placeholder('외박·외출 신청은 다음 단계(3-4)에서, 날짜별 남은 자리·마감 표시는 3-3에서 만듭니다.'));
+  parts.push(placeholder('외박·외출 신청은 다음 단계(3-4)에서 만듭니다.'));
 
   // 받은 일수 요청 (포상휴가·위로휴가) + 상점 전환 요청
   const head = el('div', 'leave-sub-head');
@@ -256,7 +262,7 @@ function officerParts(redraw) {
   parts.push(meritHead);
   parts.push(el('p', 'help', '병사를 골라 사유와 함께 상점이나 벌점을 줍니다. 벌점은 그 병사의 상점에서 빠지고, 상점은 0점 아래로 내려가지 않습니다.'));
 
-  parts.push(placeholder('날짜별 출타 인원과 신청자 명단, 출타율 입력은 다음 단계(3-3)에서 만듭니다.', true));
+  parts.push(...quotaParts(redraw));
   return parts;
 }
 
@@ -470,6 +476,14 @@ function applyParts(redraw, user, summary) {
   const remaining = Object.fromEntries(summary.map((x) => [x.leave_type, x.remaining]));
   const myActive = getMyLeaveRequests().filter((r) => r.status === 'requested');
   const myLeaveOn = (iso) => myActive.find((r) => r.start_date <= iso && iso <= r.end_date);
+  // 보고 있는 달 중 신청할 수 있는 날짜의 남은 자리 (3-3)
+  const monthFirst = isoOf(st.year, st.month, 1);
+  const monthLast = isoOf(st.year, st.month, new Date(st.year, st.month + 1, 0).getDate());
+  const seatStart = monthFirst > win.start ? monthFirst : win.start;
+  const seatEnd = monthLast < win.end ? monthLast : win.end;
+  const seats = Object.fromEntries(
+    (seatStart <= seatEnd ? getDayAvailability('leave', seatStart, seatEnd) : []).map((x) => [x.date, x]),
+  );
 
   const box = el('div', 'apply-box');
   box.append(el('h3', 'apply-title', '휴가 신청'));
@@ -586,6 +600,15 @@ function applyParts(redraw, user, summary) {
       cell.disabled = true;
       cell.classList.add('mine');
       label = ', 이미 신청한 휴가';
+    } else if (seats[iso]?.full) {
+      // 정원이 찬 날: 회색 "마감", 누를 수 없음
+      cell.disabled = true;
+      cell.classList.add('full');
+      cell.append(el('span', 'apply-seats', '마감'));
+      label = ', 마감';
+    } else if (seats[iso] && seats[iso].remaining !== null) {
+      cell.append(el('span', 'apply-seats', `${seats[iso].remaining}자리`));
+      label = `, 남은 자리 ${seats[iso].remaining}`;
     }
     const end = st.end ?? st.start;
     if (st.start && iso >= st.start && iso <= end) {
@@ -601,7 +624,7 @@ function applyParts(redraw, user, summary) {
 
   // 안내 또는 기간과 종류별 일수
   if (!st.start) {
-    box.append(el('p', 'apply-guide', `출발일을 누르세요. 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}`));
+    box.append(el('p', 'apply-guide', `출발일을 누르세요. 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날입니다.`));
     return [box];
   }
   if (!st.end) {
@@ -722,4 +745,168 @@ function myRequestParts(redraw) {
   });
   parts.push(list);
   return parts;
+}
+
+// ── 간부: 출타율 설정, 기간별 출타율, 날짜별 출타 현황 (3-3) ──────────
+
+const RATE_KINDS = ['leave', 'overnight', 'outing'];
+const RATE_KIND_LABELS = { leave: '휴가', overnight: '외박', outing: '외출' };
+let rateMessage = null;
+
+function quotaParts(redraw) {
+  const parts = [];
+  const settings = getRateSettings();
+  const capacity = (rate) => Math.floor((settings.soldiers * rate) / 100);
+
+  // 기본 출타율
+  const head = el('div', 'leave-sub-head');
+  head.append(el('h3', '', '출타율'));
+  parts.push(head);
+  parts.push(el('p', 'help', `하루 정원 = 부대 전체 병사 ${settings.soldiers}명 × 출타율 (소수점 버림). 휴가·외박·외출은 따로 계산합니다.`));
+  if (rateMessage) {
+    const msg = el('p', 'apply-message', rateMessage);
+    msg.setAttribute('role', 'status');
+    msg.tabIndex = -1;
+    parts.push(msg);
+    rateMessage = null;
+  }
+  const form = el('form', 'rate-form');
+  form.noValidate = true;
+  RATE_KINDS.forEach((kind) => {
+    const row = el('label', 'rate-row');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.inputMode = 'numeric';
+    input.min = '0';
+    input.max = '100';
+    input.name = kind;
+    input.value = settings.defaults[kind] ?? '';
+    const cap = el('span', 'rate-capacity');
+    const update = () => {
+      const rate = Number(input.value);
+      cap.textContent = Number.isInteger(rate) && rate >= 0 && rate <= 100 ? `→ 하루 ${capacity(rate)}명` : '';
+    };
+    input.addEventListener('input', update);
+    update();
+    row.append(el('span', 'rate-kind', RATE_KIND_LABELS[kind]), input, el('span', 'rate-unit', '%'), cap);
+    form.append(row);
+  });
+  const error = el('p', 'form-error');
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  const save = el('button', 'primary-button', '출타율 저장');
+  save.type = 'submit';
+  save.dataset.action = 'save-rates';
+  form.append(error, save);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const changed = RATE_KINDS.filter((kind) => String(settings.defaults[kind] ?? '') !== form.elements[kind].value);
+    for (const kind of changed) {
+      const result = setDefaultRate(kind, form.elements[kind].value);
+      if (!result.ok) {
+        error.textContent = `${RATE_KIND_LABELS[kind]}: ${Object.values(result.errors ?? {})[0] ?? '저장할 수 없습니다.'}`;
+        error.hidden = false;
+        form.elements[kind].focus();
+        return;
+      }
+    }
+    rateMessage = changed.length ? '출타율을 저장했습니다. 날짜별 남은 자리에 바로 반영됩니다.' : '바뀐 값이 없습니다.';
+    redraw('.leave-section .apply-message');
+  });
+  parts.push(form);
+
+  // 기간별 출타율
+  const periodHead = el('div', 'leave-sub-head');
+  periodHead.append(
+    el('h3', '', '기간별 출타율'),
+    button('small-button', '+ 기간 추가', 'add-period', () => openPeriodDialog(redraw)),
+  );
+  parts.push(periodHead);
+  parts.push(el('p', 'help', '그 기간에는 기본 출타율 대신 이 값을 씁니다 (예: 훈련 기간 휴가 0%). 겹치면 더 낮은 값을 씁니다.'));
+  if (settings.periods.length === 0) {
+    parts.push(el('p', 'cal-empty', '넣은 기간이 없습니다.'));
+  } else {
+    const list = el('ul', 'grant-list period-list');
+    settings.periods.forEach((p) => {
+      const item = el('li', 'grant-item');
+      item.dataset.periodId = p.id;
+      item.append(
+        el('span', 'grant-title', `${RATE_KIND_LABELS[p.kind]} ${p.rate}%`),
+        el('span', 'grant-meta', `${shortDay(p.start_date)} ~ ${shortDay(p.end_date)} · 하루 ${capacity(p.rate)}명`),
+      );
+      const actions = el('span', 'grant-actions');
+      actions.append(
+        button('small-button danger', '삭제', null, () => {
+          if (!window.confirm(`${RATE_KIND_LABELS[p.kind]} ${p.rate}% (${shortDay(p.start_date)} ~ ${shortDay(p.end_date)}) 기간을 지울까요?`)) return;
+          deleteRatePeriod(p.id);
+          redraw('[data-action="add-period"]');
+        }),
+      );
+      item.append(actions);
+      list.append(item);
+    });
+    parts.push(list);
+  }
+
+  // 날짜별 휴가 출타 현황 (오늘 ~ 한 달)
+  const win = getApplyWindow();
+  const roster = getLeaveRoster('leave', win.start, win.end).filter((d) => d.count > 0 || d.full);
+  const rosterHead = el('div', 'leave-sub-head');
+  rosterHead.append(el('h3', '', '날짜별 휴가 출타 현황'));
+  parts.push(rosterHead);
+  parts.push(el('p', 'help', `${shortDay(win.start)} ~ ${shortDay(win.end)} 중 신청자가 있거나 마감된 날만 보여 줍니다.`));
+  if (roster.length === 0) {
+    parts.push(el('p', 'cal-empty', '이 기간에 휴가를 신청한 사람이 없습니다.'));
+  } else {
+    const list = el('ul', 'grant-list roster-list');
+    roster.forEach((day) => {
+      const item = el('li', `grant-item roster-item${day.over ? ' over' : day.full ? ' full' : ''}`);
+      item.dataset.date = day.date;
+      const badge = day.over ? '초과' : day.full ? '마감' : '';
+      item.append(el('span', 'grant-title', `${shortDay(day.date)} · ${day.count}/${day.capacity ?? '∞'}명`));
+      if (badge) item.append(el('span', `quota-badge ${day.over ? 'over' : 'full'}`, badge));
+      item.append(
+        el(
+          'span',
+          'grant-meta',
+          day.people.length ? day.people.map((p) => `${p.name}(${p.position})`).join(', ') : '신청자 없음 (출타율 0%)',
+        ),
+      );
+      if (day.over) {
+        item.append(el('span', 'grant-meta over-note', '출타율을 낮춰 정원을 넘었습니다. 기존 신청은 그대로 두고, 이날은 새 신청을 받지 않습니다.'));
+      }
+      list.append(item);
+    });
+    parts.push(list);
+  }
+  return parts;
+}
+
+function openPeriodDialog(redraw) {
+  const today = getApplyWindow().start;
+  const form = openForm(
+    `<form class="dialog-body" novalidate>
+      <h2 id="leave-dialog-title">기간별 출타율 추가</h2>
+      <fieldset class="field">
+        <legend class="field-label">종류</legend>
+        <div class="choice-row">
+          <label class="choice"><input type="radio" name="kind" value="leave" checked> 휴가</label>
+          <label class="choice"><input type="radio" name="kind" value="overnight"> 외박</label>
+          <label class="choice"><input type="radio" name="kind" value="outing"> 외출</label>
+        </div>
+        <span class="field-error" data-error-for="kind" hidden></span>
+      </fieldset>
+      ${field('start_date', '시작 날짜', `<input name="start_date" type="date" value="${today}" required>`)}
+      ${field('end_date', '끝나는 날짜 (하루면 비워 두기)', '<input name="end_date" type="date">')}
+      ${field('rate', '출타율 (%)', '<input name="rate" type="number" inputmode="numeric" min="0" max="100" value="0" required>')}
+      <p class="help">예: 훈련 기간에는 휴가 0%. 이미 신청한 사람은 그대로 두고, 정원을 넘은 날은 새 신청을 받지 않습니다.</p>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">추가</button>
+      <button type="button" class="secondary-button" data-action="close">취소</button>
+    </form>`,
+    (f) => addRatePeriod({ kind: f.kind.value, start_date: f.start_date.value, end_date: f.end_date.value, rate: f.rate.value }),
+    () => redraw('[data-action="add-period"]'),
+    'start_date',
+  );
+  return form;
 }
