@@ -18,9 +18,10 @@
 //   given_points: 간부가 처음 준 점수. 벌점은 상점을 0점까지만 깎으므로 points보다 클 수 있다.
 //   남은 상점 = points 합계 (저장하지 않고 매번 계산). 점수는 모두 가상 값이다.
 // - leave_requests.kind: leave(휴가), overnight(외박), outing(외출) / status: requested(신청), cancelled(취소)
-// - leave_settings: 기본 출타율(%). kind별 가장 최근 값을 쓴다 (가상 값: 휴가 20%, 외박·외출 10%)
-// - leave_rate_periods: 기간별 출타율. 그 기간에는 기본 출타율 대신 이 값을 쓴다
-// - 가상 휴가 신청: 11/12~13에 4명(정원 4명이라 마감), 11/5~6에 1명
+// - leave_settings: 기본 출타율(%). kind: total(총 출타 — 휴가·외박·외출을 모두 셈), leave(휴가만 셈).
+//   kind별 가장 최근 값을 쓴다. 휴가는 총 출타에 포함되므로 휴가 비율 ≤ 총 출타 비율 (사용자 값: 총 35%, 휴가 20%)
+// - leave_rate_periods: 기간별 출타율(kind: total 또는 leave). 그 기간에는 기본 출타율 대신 이 값을 쓴다
+// - 가상 휴가 신청: 11/12~13에 4명(휴가 정원 4명이라 휴가 마감, 총 출타는 7명 중 4명), 11/5~6에 1명
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
 
 export const mockDb = {
@@ -765,22 +766,15 @@ export const mockDb = {
   "leave_settings": [
     {
       "id": "s01",
-      "kind": "leave",
-      "rate": 20,
+      "kind": "total",
+      "rate": 35,
       "updated_by": "o01",
       "updated_at": "2026-10-01T09:00:00.000Z"
     },
     {
       "id": "s02",
-      "kind": "overnight",
-      "rate": 10,
-      "updated_by": "o01",
-      "updated_at": "2026-10-01T09:00:00.000Z"
-    },
-    {
-      "id": "s03",
-      "kind": "outing",
-      "rate": 10,
+      "kind": "leave",
+      "rate": 20,
       "updated_by": "o01",
       "updated_at": "2026-10-01T09:00:00.000Z"
     }

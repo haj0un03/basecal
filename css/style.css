@@ -1110,8 +1110,9 @@ body {
 }
 
 .rate-kind {
-  width: 3em;
+  width: 4.5em;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .rate-row input {
@@ -1152,6 +1153,68 @@ body {
 
 .over-note {
   color: #a12222;
+}
+
+/* 간부: 출타 현황 달력 */
+.roster-day.selected {
+  background: #e6f0ec;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.roster-day.full,
+.roster-day.leave-full {
+  background: var(--bg);
+}
+
+.roster-day.full .apply-seats,
+.roster-day.leave-full .apply-seats {
+  font-weight: 700;
+}
+
+.roster-day.over .apply-seats {
+  color: #a12222;
+  font-weight: 700;
+}
+
+.roster-day .apply-seats {
+  color: var(--text);
+}
+
+.roster-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.roster-detail h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.roster-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.roster-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.roster-chip.full {
+  border-color: var(--text-muted);
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+.roster-people {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
 }
 
 /* 로그인 화면 */
