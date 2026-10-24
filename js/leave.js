@@ -1,5 +1,5 @@
 // 신청 탭 휴가 영역
-// - 병사: 휴가 종류별·상점 현황, 받은 일수 요청(포상·위로), 상점 → 포상휴가 전환 요청, 상점·벌점 내역
+// - 병사: 휴가 종류별·상점 현황, 달력으로 휴가 신청·취소, 받은 일수 요청(포상·위로), 상점 → 포상휴가 전환 요청, 상점·벌점 내역
 // - 간부: 받은 일수·상점 전환 승인·반려, 상점·벌점 주기
 import {
   getMyLeaveSummary,
@@ -11,6 +11,10 @@ import {
   getSoldiers,
   givePoints,
   requestMeritConversion,
+  getApplyWindow,
+  getMyLeaveRequests,
+  applyLeave,
+  cancelLeaveRequest,
 } from './data.js';
 import { MAX_POINTS_PER_ENTRY } from './settings.js';
 
@@ -70,21 +74,22 @@ export function renderLeaveSection(section, user, focusSelector) {
     ),
   );
 
-  parts.push(...(user.role === 'soldier' ? soldierParts(redraw) : officerParts(redraw)));
+  parts.push(...(user.role === 'soldier' ? soldierParts(redraw, user) : officerParts(redraw)));
   section.replaceChildren(...parts);
   if (focusSelector) section.querySelector(focusSelector)?.focus();
 }
 
 // ── 병사 ─────────────────────────────────────────────────
 
-function soldierParts(redraw) {
+function soldierParts(redraw, user) {
   const parts = [];
   const merit = getMyMeritSummary();
 
   // 휴가 종류별 남은 일수 + 상점
+  const leaveSummary = getMyLeaveSummary();
   const summary = el('div', 'leave-summary');
   summary.setAttribute('aria-label', '내 휴가 일수와 상점');
-  getMyLeaveSummary().forEach(({ leave_type: type, granted, used, remaining }) => {
+  leaveSummary.forEach(({ leave_type: type, granted, used, remaining }) => {
     const card = el('div', `leave-card leave-${type}`);
     card.dataset.leaveType = type;
     card.append(
@@ -106,7 +111,9 @@ function soldierParts(redraw) {
   summary.append(meritCard);
   parts.push(summary);
 
-  parts.push(placeholder('달력에서 날짜를 골라 휴가·외박·외출 신청하기는 다음 단계(3-2)에서 만듭니다.'));
+  parts.push(...applyParts(redraw, user, leaveSummary));
+  parts.push(...myRequestParts(redraw));
+  parts.push(placeholder('외박·외출 신청은 다음 단계(3-4)에서, 날짜별 남은 자리·마감 표시는 3-3에서 만듭니다.'));
 
   // 받은 일수 요청 (포상휴가·위로휴가) + 상점 전환 요청
   const head = el('div', 'leave-sub-head');
@@ -374,4 +381,264 @@ function openPointsDialog(redraw) {
     option.textContent = `${name} · ${position} (상점 ${balance}점)`;
     select.append(option);
   });
+}
+
+// ── 병사: 달력으로 휴가 신청 ("휴가 계산기") ────────────────
+
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+const APPLY_ORDER = ['annual', 'reward', 'consolation'];
+
+// 신청 달력에서 보고 있는 달, 고른 출발일·복귀일, 종류별 일수. 다른 사람이 들어오면 처음으로.
+let applyState = null;
+
+function isoOf(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function inclusiveDays(start, end) {
+  const utc = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((utc(end) - utc(start)) / 86400000) + 1;
+}
+
+function shortDay(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${m}/${d}(${WEEKDAYS[new Date(y, m - 1, d).getDay()]})`;
+}
+
+// 기간이 바뀌면 연가부터 남은 일수만큼 차례로 채운다.
+function defaultAllocation(total, remaining) {
+  const alloc = {};
+  let left = total;
+  APPLY_ORDER.forEach((type) => {
+    alloc[type] = Math.max(0, Math.min(left, remaining[type]));
+    left -= alloc[type];
+  });
+  return alloc;
+}
+
+function applyParts(redraw, user, summary) {
+  const win = getApplyWindow();
+  if (!applyState || applyState.userId !== user.id) {
+    const [y, m] = win.start.split('-').map(Number);
+    applyState = { userId: user.id, year: y, month: m - 1, start: null, end: null, alloc: null, message: null };
+  }
+  const st = applyState;
+  const remaining = Object.fromEntries(summary.map((x) => [x.leave_type, x.remaining]));
+  const myActive = getMyLeaveRequests().filter((r) => r.status === 'requested');
+  const myLeaveOn = (iso) => myActive.find((r) => r.start_date <= iso && iso <= r.end_date);
+
+  const box = el('div', 'apply-box');
+  box.append(el('h3', 'apply-title', '휴가 신청'));
+  if (st.message) {
+    const msg = el('p', 'apply-message', st.message);
+    msg.setAttribute('role', 'status');
+    msg.tabIndex = -1;
+    box.append(msg);
+  }
+
+  // 달 넘기기 (신청할 수 있는 달만)
+  const [minY, minM] = win.start.split('-').map(Number);
+  const [maxY, maxM] = win.end.split('-').map(Number);
+  const cur = st.year * 12 + st.month;
+  const nav = el('div', 'apply-nav');
+  const prev = button('cal-nav-button', '‹', 'apply-prev', () => {
+    const d = new Date(st.year, st.month - 1, 1);
+    st.year = d.getFullYear();
+    st.month = d.getMonth();
+    redraw('[data-action="apply-prev"]');
+  });
+  prev.setAttribute('aria-label', '이전 달');
+  prev.disabled = cur <= minY * 12 + (minM - 1);
+  const next = button('cal-nav-button', '›', 'apply-next', () => {
+    const d = new Date(st.year, st.month + 1, 1);
+    st.year = d.getFullYear();
+    st.month = d.getMonth();
+    redraw('[data-action="apply-next"]');
+  });
+  next.setAttribute('aria-label', '다음 달');
+  next.disabled = cur >= maxY * 12 + (maxM - 1);
+  nav.append(prev, el('span', 'apply-month', `${st.year}년 ${st.month + 1}월`), next);
+  box.append(nav);
+
+  // 신청 달력
+  const grid = el('div', 'apply-grid');
+  WEEKDAYS.forEach((name, i) => {
+    const head = el('div', 'cal-weekday', name);
+    if (i === 0) head.classList.add('sun');
+    if (i === 6) head.classList.add('sat');
+    grid.append(head);
+  });
+  const first = new Date(st.year, st.month, 1).getDay();
+  const lastDay = new Date(st.year, st.month + 1, 0).getDate();
+  for (let i = 0; i < first; i += 1) grid.append(el('div', 'apply-blank'));
+  for (let day = 1; day <= lastDay; day += 1) {
+    const iso = isoOf(st.year, st.month, day);
+    const mine = myLeaveOn(iso);
+    const outside = iso < win.start || iso > win.end;
+    const cell = button('apply-day', '', null, () => {
+      if (!st.start || st.end || iso < st.start) {
+        st.start = iso;
+        st.end = null;
+      } else {
+        st.end = iso;
+      }
+      st.alloc = null;
+      st.message = null;
+      redraw(`.apply-day[data-date="${iso}"]`);
+    });
+    cell.dataset.date = iso;
+    cell.append(el('span', 'apply-num', String(day)));
+    const col = (first + day - 1) % 7;
+    if (col === 0) cell.classList.add('sun');
+    if (col === 6) cell.classList.add('sat');
+    if (iso === win.start) cell.classList.add('today');
+    let label = '';
+    if (outside) {
+      cell.disabled = true;
+      cell.classList.add('outside');
+      label = ', 신청할 수 없는 날짜';
+    } else if (mine) {
+      cell.disabled = true;
+      cell.classList.add('mine');
+      cell.append(el('span', 'apply-tag', '휴가'));
+      label = ', 이미 신청한 휴가';
+    }
+    const end = st.end ?? st.start;
+    if (st.start && iso >= st.start && iso <= end) {
+      cell.classList.add('in-range');
+      if (iso === st.start) cell.classList.add('range-start');
+      if (iso === end) cell.classList.add('range-end');
+      label += iso === st.start ? ', 출발일' : iso === end ? ', 복귀일' : ', 휴가 기간';
+    }
+    cell.setAttribute('aria-label', `${shortDay(iso)}${label}`);
+    grid.append(cell);
+  }
+  box.append(grid);
+
+  // 안내 또는 기간과 종류별 일수
+  if (!st.start) {
+    box.append(el('p', 'apply-guide', `출발일을 누르세요. 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}`));
+    return [box];
+  }
+  if (!st.end) {
+    box.append(el('p', 'apply-guide', `출발일 ${shortDay(st.start)}. 이제 복귀일을 누르세요. (하루짜리면 같은 날을 한 번 더)`));
+    return [box];
+  }
+
+  const total = inclusiveDays(st.start, st.end);
+  if (!st.alloc) st.alloc = defaultAllocation(total, remaining);
+  const range = el('p', 'apply-range');
+  range.append(el('strong', '', `${shortDay(st.start)} ~ ${shortDay(st.end)}`), ` · ${total}일 (출발·복귀일 포함)`);
+  box.append(range);
+
+  const form = el('form', 'apply-form');
+  form.noValidate = true;
+  const rows = el('div', 'apply-alloc');
+  APPLY_ORDER.forEach((type) => {
+    const row = el('label', 'apply-alloc-row');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.inputMode = 'numeric';
+    input.min = '0';
+    input.max = String(Math.max(0, remaining[type]));
+    input.name = type;
+    input.value = String(st.alloc[type]);
+    row.append(
+      el('span', 'apply-alloc-type', LEAVE_TYPE_LABELS[type]),
+      input,
+      el('span', 'apply-alloc-left', `일 / 남은 ${remaining[type]}일`),
+    );
+    rows.append(row);
+  });
+  form.append(rows);
+
+  const sumLine = el('p', 'apply-sum');
+  sumLine.setAttribute('aria-live', 'polite');
+  const updateSum = () => {
+    APPLY_ORDER.forEach((type) => {
+      st.alloc[type] = Number(form.elements[type].value || 0);
+    });
+    const sum = APPLY_ORDER.reduce((s, type) => s + st.alloc[type], 0);
+    const ok = sum === total;
+    sumLine.textContent = ok ? `합계 ${sum}일 / ${total}일 ✓` : `합계 ${sum}일 / ${total}일 — 기간과 같게 맞추세요`;
+    sumLine.classList.toggle('mismatch', !ok);
+  };
+  form.addEventListener('input', updateSum);
+  form.append(sumLine);
+  const error = el('p', 'form-error');
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  form.append(error);
+
+  const submit = el('button', 'primary-button', `${total}일 휴가 신청하기`);
+  submit.type = 'submit';
+  submit.dataset.action = 'apply-leave';
+  const reset = button('secondary-button', '날짜 다시 고르기', 'apply-reset', () => {
+    st.start = null;
+    st.end = null;
+    st.alloc = null;
+    redraw('.apply-title');
+  });
+  form.append(submit, reset);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    updateSum();
+    const result = applyLeave({ start_date: st.start, end_date: st.end, items: { ...st.alloc } });
+    if (!result.ok) {
+      error.textContent = result.errors ? Object.values(result.errors).join(' ') : '신청할 수 없습니다.';
+      error.hidden = false;
+      return;
+    }
+    st.message = `${shortDay(st.start)} ~ ${shortDay(st.end)} ${total}일 휴가를 신청했습니다. 달력에도 표시됩니다.`;
+    st.start = null;
+    st.end = null;
+    st.alloc = null;
+    redraw('.apply-message');
+  });
+  updateSum();
+  box.append(form);
+  return [box];
+}
+
+// 병사: 내 휴가 신청 내역 (취소 가능)
+function myRequestParts(redraw) {
+  const parts = [];
+  const head = el('div', 'leave-sub-head');
+  head.append(el('h3', '', '내 휴가 신청 내역'));
+  parts.push(head);
+  const requests = getMyLeaveRequests().filter((r) => r.kind === 'leave');
+  if (requests.length === 0) {
+    parts.push(el('p', 'cal-empty', '신청한 휴가가 없습니다.'));
+    return parts;
+  }
+  const list = el('ul', 'grant-list request-list');
+  requests.forEach((r) => {
+    const active = r.status === 'requested';
+    const item = el('li', `grant-item request-${r.status}`);
+    item.dataset.requestId = r.id;
+    const breakdown = r.items.map((x) => `${LEAVE_TYPE_LABELS[x.leave_type]} ${x.days}`).join(' + ');
+    item.append(
+      el('span', `status-badge ${active ? 'status-approved' : 'status-rejected'}`, active ? '신청' : '취소'),
+      el('span', 'grant-title', `${shortDay(r.start_date)} ~ ${shortDay(r.end_date)} · ${r.days}일`),
+      el('span', 'grant-meta', breakdown),
+    );
+    if (active) {
+      const actions = el('span', 'grant-actions');
+      actions.append(
+        button('small-button danger', '취소', null, () => {
+          if (!window.confirm(`${shortDay(r.start_date)} ~ ${shortDay(r.end_date)} 휴가 신청을 취소할까요? 일수가 되돌아옵니다.`)) return;
+          cancelLeaveRequest(r.id);
+          applyState.message = '휴가 신청을 취소했습니다. 일수가 되돌아왔습니다.';
+          redraw('.apply-message');
+        }),
+      );
+      item.append(actions);
+    }
+    list.append(item);
+  });
+  parts.push(list);
+  return parts;
 }

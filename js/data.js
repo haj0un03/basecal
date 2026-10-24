@@ -716,3 +716,146 @@ export function requestMeritConversion(input, now = Date.now()) {
   mockDb.leave_grants.push(grant);
   return { ok: true, grant: { ...grant } };
 }
+
+// ── 휴가 신청 (Phase 3-2) ───────────────────────────────────
+// 신청은 간부 승인 없이 바로 등록되고, 그 순간 남은 일수에서 빠진다.
+// 오늘부터 한 달 이내의 날짜만 신청할 수 있다. 휴가 일수는 출발일·복귀일을 모두 센다(주말 포함).
+// 정원(출타율) 확인은 3-3에서 붙인다.
+
+function localISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function inclusiveDays(start, end) {
+  const toUTC = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUTC(end) - toUTC(start)) / 86400000) + 1;
+}
+
+// 신청할 수 있는 기간: 오늘 ~ 한 달 뒤 같은 날 (다음 달에 그날이 없으면 그 달 마지막 날)
+export function getApplyWindow(now = Date.now()) {
+  const today = new Date(now);
+  const lastDayNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0).getDate();
+  const end = new Date(today.getFullYear(), today.getMonth() + 1, Math.min(today.getDate(), lastDayNextMonth));
+  return { start: localISO(today), end: localISO(end) };
+}
+
+function requestView(r) {
+  const event = mockDb.events.find((e) => e.id === r.event_id);
+  const items = mockDb.leave_request_items
+    .filter((item) => item.request_id === r.id)
+    .map((item) => ({ leave_type: item.leave_type, days: item.days }));
+  return {
+    ...r,
+    start_date: r.start_date ?? event?.start_date,
+    end_date: r.end_date ?? event?.end_date,
+    days: items.reduce((sum, item) => sum + item.days, 0),
+    items,
+  };
+}
+
+// 내 출타 신청 (취소한 것 포함, 최근 출발일부터)
+export function getMyLeaveRequests() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return mockDb.leave_requests
+    .filter((r) => r.user_id === user.id)
+    .map(requestView)
+    .sort((a, b) => (b.start_date ?? '').localeCompare(a.start_date ?? '') || b.id.localeCompare(a.id));
+}
+
+// 병사만. input: { start_date, end_date, items: { annual, reward, consolation } }
+// 결과: { ok: true, request } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function applyLeave(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
+  const { start: windowStart, end: windowEnd } = getApplyWindow(now);
+  const start = input.start_date;
+  const end = input.end_date || start;
+  const errors = {};
+
+  if (!isDate(start) || !isDate(end)) {
+    errors.dates = '출발일과 복귀일을 고르세요.';
+  } else if (end < start) {
+    errors.dates = '복귀일은 출발일과 같거나 뒤여야 합니다.';
+  } else if (start < windowStart || end > windowEnd) {
+    errors.dates = `오늘부터 한 달 이내(${windowStart} ~ ${windowEnd})의 날짜만 신청할 수 있습니다.`;
+  } else {
+    // 이미 신청한 내 출타와 날짜가 겹치면 막는다 (가정, current_status.md 참고)
+    const overlap = getMyLeaveRequests().find(
+      (r) => r.status === 'requested' && r.start_date <= end && r.end_date >= start,
+    );
+    if (overlap) errors.dates = `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
+  }
+
+  const total = errors.dates ? 0 : inclusiveDays(start, end);
+  const items = LEAVE_TYPES.map((type) => ({ leave_type: type, days: Number(input.items?.[type] ?? 0) }));
+  if (items.some((item) => !Number.isInteger(item.days) || item.days < 0)) {
+    errors.items = '종류별 일수는 0 이상의 숫자로 입력하세요.';
+  } else if (!errors.dates) {
+    const sum = items.reduce((s, item) => s + item.days, 0);
+    if (sum !== total) {
+      errors.items = `종류별 일수의 합(${sum}일)이 휴가 기간(${total}일)과 같아야 합니다.`;
+    } else {
+      const remaining = Object.fromEntries(getMyLeaveSummary().map((x) => [x.leave_type, x.remaining]));
+      const short = items.filter((item) => item.days > remaining[item.leave_type]);
+      if (short.length) {
+        const names = { annual: '연가', reward: '포상휴가', consolation: '위로휴가' };
+        errors.items = short
+          .map((item) => `${names[item.leave_type]} ${item.days - remaining[item.leave_type]}일 부족 (남은 ${remaining[item.leave_type]}일)`)
+          .join(', ');
+      }
+    }
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  // 달력에 보일 일정(본인에게만 보임)과 신청 기록, 종류별 사용 일수를 함께 만든다.
+  const event = {
+    id: nextId('e', mockDb.events),
+    type: 'leave',
+    title: '휴가',
+    start_date: start,
+    end_date: end,
+    time: null,
+    author_id: user.id,
+    memo: '',
+    repeat_yearly: false,
+    unit_category: null,
+  };
+  mockDb.events.push(event);
+  const request = {
+    id: nextId('r', mockDb.leave_requests),
+    user_id: user.id,
+    kind: 'leave',
+    event_id: event.id,
+    start_date: start,
+    end_date: end,
+    status: 'requested',
+    requested_at: new Date(now).toISOString(),
+    cancelled_at: null,
+  };
+  mockDb.leave_requests.push(request);
+  items
+    .filter((item) => item.days > 0)
+    .forEach((item) => mockDb.leave_request_items.push({ request_id: request.id, leave_type: item.leave_type, days: item.days }));
+  return { ok: true, request: requestView(request) };
+}
+
+// 본인만. 취소하면 달력에서 사라지고 일수가 되돌아온다.
+export function cancelLeaveRequest(id, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const request = mockDb.leave_requests.find((r) => r.id === id && r.user_id === user.id);
+  if (!request) return { ok: false, reason: 'not_found' };
+  if (request.status !== 'requested') return { ok: false, reason: 'already_cancelled' };
+  request.status = 'cancelled';
+  request.cancelled_at = new Date(now).toISOString();
+  const eventIndex = mockDb.events.findIndex((e) => e.id === request.event_id);
+  if (eventIndex >= 0) mockDb.events.splice(eventIndex, 1);
+  return { ok: true, request: requestView(request) };
+}

@@ -810,6 +810,187 @@ body {
 .status-badge.status-approved { color: var(--accent); }
 .status-badge.status-rejected { color: #a12222; }
 
+/* 휴가 신청 달력 ("휴가 계산기") */
+.apply-box {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.apply-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.apply-message {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #e6f0ec;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.apply-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.apply-nav .cal-nav-button:disabled {
+  color: var(--border);
+  cursor: default;
+}
+
+.apply-month {
+  font-weight: 700;
+}
+
+.apply-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px 0;
+}
+
+.apply-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.apply-day.sun .apply-num { color: var(--sun); }
+.apply-day.sat .apply-num { color: var(--sat); }
+
+.apply-day.today .apply-num {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 신청할 수 없는 날(한 달 밖)과 이미 신청한 날은 회색 */
+.apply-day:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.apply-day.outside .apply-num {
+  color: var(--border);
+}
+
+.apply-day.mine {
+  background: var(--bg);
+}
+
+.apply-tag {
+  color: var(--type-leave);
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+/* 고른 휴가 기간 */
+.apply-day.in-range {
+  border-radius: 0;
+  background: #e3f1e9;
+  background: color-mix(in srgb, var(--type-leave) 18%, var(--surface));
+}
+
+.apply-day.range-start {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.apply-day.range-end {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.apply-day.range-start .apply-num,
+.apply-day.range-end .apply-num {
+  min-width: 24px;
+  border-radius: 12px;
+  background: var(--type-leave);
+  color: #ffffff;
+}
+
+.apply-day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.apply-guide,
+.apply-range {
+  margin: 10px 0 0;
+  font-size: 0.9rem;
+}
+
+.apply-guide {
+  color: var(--text-muted);
+}
+
+.apply-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.apply-alloc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apply-alloc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apply-alloc-type {
+  width: 5em;
+  font-weight: 600;
+}
+
+.apply-alloc-row input {
+  width: 64px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 16px;
+  text-align: center;
+}
+
+.apply-alloc-left {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.apply-sum {
+  margin: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.apply-sum.mismatch {
+  color: #a12222;
+}
+
 /* 로그인 화면 */
 body.signed-out .user-area,
 body.signed-out .tabbar {
