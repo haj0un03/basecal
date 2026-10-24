@@ -707,6 +707,42 @@ body {
   color: #a12222;
 }
 
+/* 포상 외박·외출 남은 횟수 */
+.pass-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.pass-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--merit);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--merit);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* 전환 창의 고르기: 이름 아래 작은 글씨로 점수 */
+.choice.choice-stack {
+  flex-direction: column;
+  gap: 0;
+  padding: 6px 2px;
+  text-align: center;
+}
+
+.choice.choice-stack input {
+  margin: 0 0 2px;
+}
+
+.choice.choice-stack small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
 .leave-sub-buttons {
   display: flex;
   gap: 6px;

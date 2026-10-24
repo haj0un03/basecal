@@ -1,7 +1,7 @@
 // 데이터 계층. 화면 코드는 가상 데이터를 직접 읽지 않고 이 파일의 함수만 쓴다.
 // Phase 5에서 이 파일 안쪽만 Supabase로 바꿔 끼운다.
 import { mockDb, mockAuth } from './mock-data.js';
-import { MERIT_POINTS_PER_REWARD_DAY, MAX_POINTS_PER_ENTRY } from './settings.js';
+import { MERIT_COSTS, MAX_POINTS_PER_ENTRY } from './settings.js';
 
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 10;
@@ -498,6 +498,23 @@ function usedDays(userId) {
   return used;
 }
 
+// 병사만. 포상 외박·포상 외출 남은 횟수: [{ type, granted, used, remaining }]
+// 쓴 횟수 = 포상으로 쓴 외박·외출 신청(3-4에서 reward_pass로 표시) 중 취소하지 않은 것
+export function getMyPassSummary() {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return [];
+  const kindOfPass = { overnight_pass: 'overnight', outing_pass: 'outing' };
+  return PASS_TYPES.map((type) => {
+    const granted = mockDb.leave_grants
+      .filter((g) => g.user_id === user.id && g.leave_type === type && g.status === 'approved')
+      .reduce((sum, g) => sum + g.days, 0);
+    const used = mockDb.leave_requests.filter(
+      (r) => r.user_id === user.id && r.kind === kindOfPass[type] && r.status === 'requested' && r.reward_pass,
+    ).length;
+    return { type, granted, used, remaining: granted - used };
+  });
+}
+
 // 병사만. 결과: [{ leave_type, granted, used, remaining }] (연가·포상휴가·위로휴가 순)
 export function getMyLeaveSummary() {
   const user = getCurrentUser();
@@ -591,7 +608,7 @@ export function decideLeaveGrant(id, decision, now = Date.now()) {
       user_id: grant.user_id,
       kind: 'conversion',
       points: -grant.merit_cost,
-      reason: `포상휴가 ${grant.days}일로 전환`,
+      reason: `${GRANT_LABELS[grant.leave_type]} ${grant.days}${unitOf(grant.leave_type)}로 전환`,
       given_by: officer.id,
       grant_id: grant.id,
       created_at: new Date(now).toISOString(),
@@ -606,8 +623,18 @@ export function decideLeaveGrant(id, decision, now = Date.now()) {
 // ── 상점·벌점 ──────────────────────────────────────────────
 // 간부가 병사를 골라 사유와 함께 상점(+) 또는 벌점(-)을 준다. 병사가 요청하지 않는다.
 // 남은 상점은 저장하지 않고 merit_points의 합계로 매번 계산한다.
-// 상점을 포상휴가로 바꾸려면 병사가 요청하고 간부가 승인한다. 승인할 때 상점이 빠진다.
-// 벌점으로 상점이 마이너스가 될 수 있다 (임시. prd.md 11번 확인 항목).
+// 상점을 포상휴가·포상 외박·포상 외출로 바꾸려면 병사가 요청하고 간부가 승인한다. 승인할 때 상점이 빠진다.
+// 바꾸는 점수는 js/settings.js의 MERIT_COSTS (100점 = 포상휴가 1일 또는 포상 외박 1회, 50점 = 포상 외출 1회).
+// 벌점은 상점을 0점까지만 깎는다. 남는 벌점은 없어진다 (2026-10-24 사용자 확정).
+
+// 상점으로 바꿀 수 있는 것. 포상 외박·외출은 횟수로 쌓였다가 외박·외출 신청 때(3-4) 1회씩 쓴다.
+export const CONVERSION_TARGETS = ['reward', 'overnight_pass', 'outing_pass'];
+export const PASS_TYPES = ['overnight_pass', 'outing_pass'];
+const GRANT_LABELS = { annual: '연가', reward: '포상휴가', consolation: '위로휴가', overnight_pass: '포상 외박', outing_pass: '포상 외출' };
+
+function unitOf(grantType) {
+  return PASS_TYPES.includes(grantType) ? '회' : '일';
+}
 
 function meritBalance(userId) {
   return mockDb.merit_points.filter((m) => m.user_id === userId).reduce((sum, m) => sum + m.points, 0);
@@ -620,7 +647,7 @@ function pendingConversionCost(userId) {
     .reduce((sum, g) => sum + g.merit_cost, 0);
 }
 
-// 병사만. 결과: { balance, reserved, available, pointsPerDay, history: [...] }
+// 병사만. 결과: { balance, reserved, available, costs, history: [...] }
 export function getMyMeritSummary() {
   const user = getCurrentUser();
   if (!user || user.role !== 'soldier') return null;
@@ -634,7 +661,7 @@ export function getMyMeritSummary() {
     balance,
     reserved,
     available: balance - reserved,
-    pointsPerDay: MERIT_POINTS_PER_REWARD_DAY,
+    costs: { ...MERIT_COSTS },
     history,
   };
 }
@@ -669,11 +696,14 @@ export function givePoints(input, now = Date.now()) {
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
 
+  // 벌점은 지금 상점까지만 깎는다 (0점 아래로 내려가지 않음). 처음 준 벌점 점수는 기록에 남긴다.
+  const deducted = input.kind === 'merit' ? points : Math.min(points, Math.max(0, meritBalance(target.id)));
   const entry = {
     id: nextId('m', mockDb.merit_points),
     user_id: target.id,
     kind: input.kind,
-    points: input.kind === 'merit' ? points : -points,
+    points: input.kind === 'merit' ? points : -deducted,
+    given_points: points,
     reason,
     given_by: officer.id,
     grant_id: null,
@@ -684,27 +714,34 @@ export function givePoints(input, now = Date.now()) {
   return { ok: true, entry: { ...entry }, balance: meritBalance(target.id) };
 }
 
-// 병사만. 상점을 포상휴가 days일로 바꿔 달라고 요청한다 (간부 승인 대기).
-// 결과: { ok: true, grant } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+// 병사만. 상점을 target(포상휴가·포상 외박·포상 외출)으로 count만큼 바꿔 달라고 요청한다 (간부 승인 대기).
+// input: { target, count }  결과: { ok: true, grant } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
 export function requestMeritConversion(input, now = Date.now()) {
   const user = getCurrentUser();
   if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
-  const days = Number(input.days);
-  const cost = days * MERIT_POINTS_PER_REWARD_DAY;
-  const available = meritBalance(user.id) - pendingConversionCost(user.id);
+  const target = input.target ?? 'reward';
+  const count = Number(input.count ?? input.days);
   const errors = {};
-  if (!Number.isInteger(days) || days < 1) {
-    errors.days = '바꿀 일수를 1 이상의 숫자로 입력하세요.';
-  } else if (cost > available) {
-    errors.days = `상점이 모자랍니다. ${days}일에는 ${cost}점이 필요하고, 지금 쓸 수 있는 상점은 ${available}점입니다.`;
+  if (!CONVERSION_TARGETS.includes(target)) {
+    errors.target = '무엇으로 바꿀지 고르세요.';
+  } else {
+    const unit = unitOf(target);
+    const cost = count * MERIT_COSTS[target];
+    const available = meritBalance(user.id) - pendingConversionCost(user.id);
+    if (!Number.isInteger(count) || count < 1) {
+      errors.count = `바꿀 ${unit === '회' ? '횟수' : '일수'}를 1 이상의 숫자로 입력하세요.`;
+    } else if (cost > available) {
+      errors.count = `상점이 모자랍니다. ${GRANT_LABELS[target]} ${count}${unit}에는 ${cost}점이 필요하고, 지금 쓸 수 있는 상점은 ${available}점입니다.`;
+    }
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
 
+  const cost = count * MERIT_COSTS[target];
   const grant = {
     id: nextId('g', mockDb.leave_grants),
     user_id: user.id,
-    leave_type: 'reward',
-    days,
+    leave_type: target,
+    days: count,
     reason: `상점 ${cost}점 전환`,
     status: 'pending',
     decided_by: null,

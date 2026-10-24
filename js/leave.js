@@ -1,5 +1,6 @@
 // 신청 탭 휴가 영역
-// - 병사: 휴가 종류별·상점 현황, 달력으로 휴가 신청·취소, 받은 일수 요청(포상·위로), 상점 → 포상휴가 전환 요청, 상점·벌점 내역
+// - 병사: 휴가 종류별·상점·포상 외박/외출 현황, 달력으로 휴가 신청·취소, 받은 일수 요청(포상·위로),
+//   상점 → 포상휴가·포상 외박·포상 외출 전환 요청, 상점·벌점 내역
 // - 간부: 받은 일수·상점 전환 승인·반려, 상점·벌점 주기
 import {
   getMyLeaveSummary,
@@ -11,6 +12,9 @@ import {
   getSoldiers,
   givePoints,
   requestMeritConversion,
+  getMyPassSummary,
+  CONVERSION_TARGETS,
+  PASS_TYPES,
   getApplyWindow,
   getMyLeaveRequests,
   applyLeave,
@@ -19,6 +23,12 @@ import {
 import { MAX_POINTS_PER_ENTRY } from './settings.js';
 
 const LEAVE_TYPE_LABELS = { annual: '연가', reward: '포상휴가', consolation: '위로휴가' };
+// 받은 것(휴가 일수·포상 횟수) 전체 이름. 포상 외박·외출은 "회"로 센다.
+const GRANT_LABELS = { ...LEAVE_TYPE_LABELS, overnight_pass: '포상 외박', outing_pass: '포상 외출' };
+
+function unitOf(type) {
+  return PASS_TYPES.includes(type) ? '회' : '일';
+}
 const STATUS_LABELS = { pending: '대기', approved: '승인', rejected: '반려' };
 const MERIT_KIND_LABELS = { merit: '상점', demerit: '벌점', conversion: '전환' };
 
@@ -106,10 +116,19 @@ function soldierParts(redraw, user) {
   meritCard.append(
     el('span', 'leave-card-type', '상점'),
     meritValue,
-    el('span', 'leave-card-detail', merit.reserved ? `전환 대기 ${merit.reserved}` : `${merit.pointsPerDay}점 = 포상 1일`),
+    el('span', 'leave-card-detail', merit.reserved ? `전환 대기 ${merit.reserved}` : `${merit.costs.reward}점=휴가1일`),
   );
   summary.append(meritCard);
   parts.push(summary);
+
+  // 포상 외박·포상 외출 남은 횟수 (외박·외출 신청 때 쓴다)
+  const passes = el('p', 'pass-summary');
+  getMyPassSummary().forEach(({ type, remaining }) => {
+    const chip = el('span', 'pass-chip', `${GRANT_LABELS[type]} ${remaining}회`);
+    chip.dataset.passType = type;
+    passes.append(chip);
+  });
+  parts.push(passes);
 
   parts.push(...applyParts(redraw, user, leaveSummary));
   parts.push(...myRequestParts(redraw));
@@ -128,7 +147,7 @@ function soldierParts(redraw, user) {
     el(
       'p',
       'help',
-      `포상휴가·위로휴가를 새로 받았으면 요청하세요. 상점은 ${merit.pointsPerDay}점마다 포상휴가 1일로 바꿔 달라고 요청할 수 있습니다. 간부가 승인하면 남은 일수에 더해집니다.`,
+      `포상휴가·위로휴가를 새로 받았으면 요청하세요. 상점은 ${merit.costs.reward}점마다 포상휴가 1일 또는 포상 외박 1회, ${merit.costs.outing_pass}점마다 포상 외출 1회로 바꿔 달라고 요청할 수 있습니다. 간부가 승인하면 더해집니다.`,
     ),
   );
 
@@ -142,7 +161,7 @@ function soldierParts(redraw, user) {
       item.dataset.grantId = g.id;
       item.append(
         el('span', `status-badge status-${g.status}`, STATUS_LABELS[g.status]),
-        el('span', 'grant-title', `${LEAVE_TYPE_LABELS[g.leave_type]} ${g.days}일`),
+        el('span', 'grant-title', `${GRANT_LABELS[g.leave_type]} ${g.days}${unitOf(g.leave_type)}`),
         el('span', 'grant-meta', `${g.reason} · ${formatDate(g.requested_at)} 요청`),
       );
       list.append(item);
@@ -163,7 +182,14 @@ function soldierParts(redraw, user) {
       item.append(
         el('span', `merit-badge merit-${m.kind}`, `${MERIT_KIND_LABELS[m.kind]} ${signed(m.points)}`),
         el('span', 'grant-title', m.reason),
-        el('span', 'grant-meta', `${formatDate(m.created_at)} · ${m.given_by_name}`),
+        el(
+          'span',
+          'grant-meta',
+          // 벌점이 상점보다 커서 0점까지만 깎인 경우 알려 준다.
+          m.kind === 'demerit' && m.given_points > -m.points
+            ? `${formatDate(m.created_at)} · ${m.given_by_name} · 벌점 ${m.given_points}점 중 ${-m.points}점만 차감 (상점은 0점 아래로 내려가지 않음)`
+            : `${formatDate(m.created_at)} · ${m.given_by_name}`,
+        ),
       );
       list.append(item);
     });
@@ -190,7 +216,7 @@ function officerParts(redraw) {
       const isConversion = g.source === 'merit';
       const item = el('li', 'grant-item status-pending');
       item.dataset.grantId = g.id;
-      const title = `${g.name} · ${LEAVE_TYPE_LABELS[g.leave_type]} ${g.days}일${isConversion ? ` (상점 ${g.merit_cost}점 전환)` : ''}`;
+      const title = `${g.name} · ${GRANT_LABELS[g.leave_type]} ${g.days}${unitOf(g.leave_type)}${isConversion ? ` (상점 ${g.merit_cost}점 전환)` : ''}`;
       const meta = isConversion
         ? `${g.position} · 지금 상점 ${g.merit_balance}점 · ${formatDate(g.requested_at)} 요청`
         : `${g.position} · ${g.reason} · ${formatDate(g.requested_at)} 요청`;
@@ -210,7 +236,7 @@ function officerParts(redraw) {
           redraw('.leave-sub-head h3');
         }),
         button('small-button danger', '반려', null, () => {
-          if (!window.confirm(`${g.name}의 ${LEAVE_TYPE_LABELS[g.leave_type]} ${g.days}일 요청을 반려할까요?`)) return;
+          if (!window.confirm(`${g.name}의 ${GRANT_LABELS[g.leave_type]} ${g.days}${unitOf(g.leave_type)} 요청을 반려할까요?`)) return;
           decideLeaveGrant(g.id, 'reject');
           redraw('.leave-sub-head h3');
         }),
@@ -228,7 +254,7 @@ function officerParts(redraw) {
     button('small-button merit-button', '+ 상점·벌점 주기', 'give-points', () => openPointsDialog(redraw)),
   );
   parts.push(meritHead);
-  parts.push(el('p', 'help', '병사를 골라 사유와 함께 상점이나 벌점을 줍니다. 벌점은 그 병사의 상점에서 빠집니다.'));
+  parts.push(el('p', 'help', '병사를 골라 사유와 함께 상점이나 벌점을 줍니다. 벌점은 그 병사의 상점에서 빠지고, 상점은 0점 아래로 내려가지 않습니다.'));
 
   parts.push(placeholder('날짜별 출타 인원과 신청자 명단, 출타율 입력은 다음 단계(3-3)에서 만듭니다.', true));
   return parts;
@@ -306,43 +332,58 @@ function openGrantDialog(redraw) {
   );
 }
 
-// 병사: 상점 → 포상휴가 전환 요청
+// 병사: 상점 → 포상휴가·포상 외박·포상 외출 전환 요청
 function openConversionDialog(redraw, merit) {
-  const maxDays = Math.max(0, Math.floor(merit.available / merit.pointsPerDay));
+  const choice = (target) =>
+    `<label class="choice choice-stack"><input type="radio" name="target" value="${target}"${target === 'reward' ? ' checked' : ''}>
+      <span>${GRANT_LABELS[target]}</span><small>${merit.costs[target]}점 = 1${unitOf(target)}</small></label>`;
   const form = openForm(
     `<form class="dialog-body" novalidate>
-      <h2 id="leave-dialog-title">상점을 포상휴가로 전환</h2>
+      <h2 id="leave-dialog-title">상점 전환</h2>
       <p class="summary-box">지금 상점 <strong class="conv-balance"></strong><br>
-        쓸 수 있는 상점 <strong class="conv-available"></strong> (전환 대기 제외)<br>
-        상점 <strong class="conv-rate"></strong> = 포상휴가 1일</p>
-      ${field('days', `바꿀 일수 (최대 ${maxDays}일)`, `<input name="days" type="number" inputmode="numeric" min="1" max="${Math.max(maxDays, 1)}" value="${maxDays >= 1 ? 1 : ''}" required>`)}
+        쓸 수 있는 상점 <strong class="conv-available"></strong> (전환 대기 제외)</p>
+      <fieldset class="field">
+        <legend class="field-label">무엇으로 바꿀까요</legend>
+        <div class="choice-row">${CONVERSION_TARGETS.map(choice).join('')}</div>
+        <span class="field-error" data-error-for="target" hidden></span>
+      </fieldset>
+      ${field('count', '바꿀 수', '<input name="count" type="number" inputmode="numeric" min="1" value="1" required>')}
       <p class="help conv-preview" aria-live="polite"></p>
-      <p class="help">간부가 승인할 때 상점이 빠지고 포상휴가가 더해집니다.</p>
+      <p class="help">간부가 승인할 때 상점이 빠지고 포상이 더해집니다. 포상 외박·외출은 외박·외출을 신청할 때 1회씩 씁니다.</p>
       <p class="form-error" role="alert" hidden></p>
       <button type="submit" class="primary-button">전환 요청</button>
       <button type="button" class="secondary-button" data-action="close">취소</button>
     </form>`,
-    (f) => requestMeritConversion({ days: f.days.value }),
+    (f) => requestMeritConversion({ target: f.target.value, count: f.count.value }),
     () => redraw('[data-action="convert-merit"]'),
-    'days',
+    'count',
   );
   form.querySelector('.conv-balance').textContent = `${merit.balance}점`;
   form.querySelector('.conv-available').textContent = `${merit.available}점`;
-  form.querySelector('.conv-rate').textContent = `${merit.pointsPerDay}점`;
+  const countLabel = form.querySelector('[data-field="count"] .field-label');
   const preview = form.querySelector('.conv-preview');
+  const submit = form.querySelector('button[type="submit"]');
   const update = () => {
-    const days = Number(form.elements.days.value);
+    const target = form.elements.target.value;
+    const cost = merit.costs[target];
+    const unit = unitOf(target);
+    const max = Math.max(0, Math.floor(merit.available / cost));
+    countLabel.textContent = `바꿀 ${unit === '회' ? '횟수' : '일수'} (최대 ${max}${unit})`;
+    form.elements.count.max = String(Math.max(max, 1));
+    submit.disabled = max < 1;
+    if (max < 1) {
+      preview.textContent = `${GRANT_LABELS[target]}(으)로 바꾸려면 상점이 ${cost}점 이상 있어야 합니다.`;
+      return;
+    }
+    const count = Number(form.elements.count.value);
     preview.textContent =
-      Number.isInteger(days) && days >= 1
-        ? `필요한 상점 ${days * merit.pointsPerDay}점 · 전환 후 남는 상점 ${merit.available - days * merit.pointsPerDay}점`
+      Number.isInteger(count) && count >= 1
+        ? `필요한 상점 ${count * cost}점 · 전환 후 남는 상점 ${merit.available - count * cost}점`
         : '';
   };
-  form.elements.days.addEventListener('input', update);
+  form.addEventListener('input', update);
+  form.addEventListener('change', update);
   update();
-  if (maxDays < 1) {
-    preview.textContent = `상점이 ${merit.pointsPerDay}점 이상 있어야 전환할 수 있습니다.`;
-    form.querySelector('button[type="submit"]').disabled = true;
-  }
 }
 
 // 간부: 상점·벌점 주기
@@ -365,7 +406,7 @@ function openPointsDialog(redraw) {
       </fieldset>
       ${field('points', `점수 (1~${MAX_POINTS_PER_ENTRY})`, `<input name="points" type="number" inputmode="numeric" min="1" max="${MAX_POINTS_PER_ENTRY}" required>`)}
       ${field('reason', '사유', '<input name="reason" maxlength="100" required placeholder="예: 환경 미화 우수">')}
-      <p class="help">벌점은 그 병사의 상점에서 빠집니다.</p>
+      <p class="help">벌점은 그 병사의 상점에서 빠집니다. 상점은 0점 아래로 내려가지 않습니다.</p>
       <p class="form-error" role="alert" hidden></p>
       <button type="submit" class="primary-button">주기</button>
       <button type="button" class="secondary-button" data-action="close">취소</button>

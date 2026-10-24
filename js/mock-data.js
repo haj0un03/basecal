@@ -10,10 +10,12 @@
 // - events.type: personal(개인), duty(근무), unit(부대), leave(휴가), overnight(외박), outing(외출)
 // - events.unit_category: training(훈련), inspection(점검), event(행사), other(기타)
 //   훈련은 제목과 설명 없이 "훈련"으로만 표시하므로 title을 비워 둔다.
-// - leave_grants: 받은 휴가 일수. leave_type: annual(연가), reward(포상휴가), consolation(위로휴가)
+// - leave_grants: 받은 휴가 일수·포상 횟수. leave_type: annual(연가), reward(포상휴가), consolation(위로휴가),
+//   overnight_pass(포상 외박, 횟수), outing_pass(포상 외출, 횟수). 포상 외박·외출은 days에 횟수를 넣는다.
 //   status: pending(대기), approved(승인), rejected(반려). 승인된 것만 남은 일수에 들어간다.
 //   일수는 모두 가상 값이다.
-// - merit_points: 상점·벌점. kind: merit(상점, +점수), demerit(벌점, -점수), conversion(포상휴가 전환, -점수)
+// - merit_points: 상점·벌점. kind: merit(상점, +점수), demerit(벌점, -점수), conversion(전환, -점수)
+//   given_points: 간부가 처음 준 점수. 벌점은 상점을 0점까지만 깎으므로 points보다 클 수 있다.
 //   남은 상점 = points 합계 (저장하지 않고 매번 계산). 점수는 모두 가상 값이다.
 // - leave_requests.kind: leave(휴가), overnight(외박), outing(외출) / status: requested(신청), cancelled(취소)
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
@@ -521,6 +523,17 @@ export const mockDb = {
       "decided_by": "o02",
       "requested_at": "2026-10-15T09:00:00.000Z",
       "decided_at": "2026-10-15T09:00:00.000Z"
+    },
+    {
+      "id": "g25",
+      "user_id": "u01",
+      "leave_type": "outing_pass",
+      "days": 1,
+      "reason": "부대 행사 지원",
+      "status": "approved",
+      "decided_by": "o01",
+      "requested_at": "2026-10-18T09:00:00.000Z",
+      "decided_at": "2026-10-18T09:00:00.000Z"
     }
   ],
   "merit_points": [
@@ -528,7 +541,8 @@ export const mockDb = {
       "id": "m01",
       "user_id": "u01",
       "kind": "merit",
-      "points": 5,
+      "points": 50,
+      "given_points": 50,
       "reason": "환경 미화 우수",
       "given_by": "o01",
       "grant_id": null,
@@ -538,7 +552,8 @@ export const mockDb = {
       "id": "m02",
       "user_id": "u01",
       "kind": "merit",
-      "points": 8,
+      "points": 50,
+      "given_points": 50,
       "reason": "사격 우수",
       "given_by": "o02",
       "grant_id": null,
@@ -547,32 +562,57 @@ export const mockDb = {
     {
       "id": "m03",
       "user_id": "u01",
+      "kind": "merit",
+      "points": 30,
+      "given_points": 30,
+      "reason": "체력 측정 특급",
+      "given_by": "o02",
+      "grant_id": null,
+      "created_at": "2026-10-07T09:00:00.000Z"
+    },
+    {
+      "id": "m04",
+      "user_id": "u01",
       "kind": "demerit",
-      "points": -2,
+      "points": -10,
+      "given_points": 10,
       "reason": "청소 불량",
       "given_by": "o01",
       "grant_id": null,
       "created_at": "2026-10-12T09:00:00.000Z"
     },
     {
-      "id": "m04",
+      "id": "m05",
       "user_id": "u02",
       "kind": "merit",
-      "points": 3,
+      "points": 30,
+      "given_points": 30,
       "reason": "경계 근무 성실",
       "given_by": "o01",
       "grant_id": null,
       "created_at": "2026-10-08T09:00:00.000Z"
     },
     {
-      "id": "m05",
+      "id": "m06",
       "user_id": "u03",
       "kind": "merit",
-      "points": 10,
+      "points": 50,
+      "given_points": 50,
       "reason": "체육대회 우승",
       "given_by": "o02",
       "grant_id": null,
       "created_at": "2026-10-16T09:00:00.000Z"
+    },
+    {
+      "id": "m07",
+      "user_id": "u03",
+      "kind": "merit",
+      "points": 50,
+      "given_points": 50,
+      "reason": "생활관 점검 우수",
+      "given_by": "o01",
+      "grant_id": null,
+      "created_at": "2026-10-17T09:00:00.000Z"
     }
   ],
   "leave_requests": [],
