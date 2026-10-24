@@ -1,6 +1,7 @@
 // 앱의 시작점. 들어오지 않았으면 들어오기 화면을, 들어왔으면 사용자 영역과 아래쪽 탭을 그린다.
 import {
   init,
+  NETWORK_ERROR,
   getCurrentUser,
   signIn,
   signOut,
@@ -37,7 +38,6 @@ const TABS = {
 const OLD_TABS = { leave: 'apply', facility: 'apply' };
 
 const ROLE_LABELS = { soldier: '병사', officer: '간부' };
-const NETWORK_ERROR = '서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
 
 const view = document.getElementById('view');
 const userButton = document.getElementById('user-button');

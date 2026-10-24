@@ -1,10 +1,14 @@
 // 데이터 계층. 화면 코드는 가상 데이터를 직접 읽지 않고 이 파일의 함수만 쓴다.
 // Phase 5: js/config.js가 있으면(REMOTE) Supabase 서버 함수로 저장하고, 없으면 가상 데이터로 동작한다.
-// - 5-1(지금): 들어오기, 인원 추가·코드 발급. 서버에서 받은 인원(profiles)을 mockDb.profiles 자리에 채워 쓴다.
-// - 아직 옮기지 않은 표(일정, 휴가 등)는 서버 모드에서도 가상 데이터다. 가상 인원 id(u01…)가 서버와 같아서 함께 쓸 수 있다.
-// - 서버 모드에서 쓰기 함수(signIn, signOut, addMember, reissueCode)는 Promise를 돌려준다. 화면은 await로 받는다.
+// - 서버에서 받은 데이터를 mockDb의 같은 표 자리에 채워 쓴다 (읽기 함수는 그대로 바로 값을 돌려준다).
+//   5-1: 인원(profiles)·들어오기·코드 발급 / 5-2: 달력 일정(개인·부대)
+// - 아직 옮기지 않은 표(휴가 등)는 서버 모드에서도 가상 데이터다. 가상 인원 id(u01…)가 서버와 같아서 함께 쓸 수 있다.
+// - 서버 모드에서 쓰기 함수는 Promise를 돌려준다. 화면은 await로 받는다 (가상 데이터 모드에서는 값을 바로 돌려준다).
 import { mockDb, mockAuth } from './mock-data.js';
 import { REMOTE, rpc } from './remote.js';
+
+// 서버에 연결하지 못했을 때(reason: 'network') 화면에 보여 줄 안내
+export const NETWORK_ERROR = '서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
 import {
   MERIT_COSTS,
   MAX_POINTS_PER_ENTRY,
@@ -65,6 +69,12 @@ async function loadState() {
     return false;
   }
   mockDb.profiles.splice(0, mockDb.profiles.length, ...state.profiles);
+  // 휴가·외박·외출 일정은 5-3에서 옮기므로 아직 이 기기의 가상 데이터를 그대로 둔다
+  // (서버에 02_events.sql을 아직 실행하지 않았으면 state.events가 없다 → 가상 일정을 그대로 쓴다)
+  if (state.events) {
+    const localAbsence = mockDb.events.filter((e) => ['leave', 'overnight', 'outing'].includes(e.type));
+    mockDb.events.splice(0, mockDb.events.length, ...localAbsence, ...state.events);
+  }
   remoteSoldierCount = state.active_soldiers;
   sessionUserId = state.me.id;
   return true;
@@ -308,12 +318,33 @@ function findOwnPersonalEvent(id, user) {
   return mockDb.events.find((e) => e.id === id && kindOf(e) !== null && e.author_id === user.id);
 }
 
-// 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found', errors }
+// 서버에 일정을 쓰고, 돌려받은 일정을 화면용 모양으로 바꾼다
+async function remoteEventWrite(name, args) {
+  const result = await remoteWrite(name, { p_token: token, ...args });
+  const user = getCurrentUser();
+  if (result.ok && result.event && user) return { ok: true, event: toCalendarEvent(result.event, user) };
+  return result;
+}
+
+function personalEventArgs(id, input, fields) {
+  return {
+    p_id: id,
+    p_kind: input.kind,
+    p_title: fields.title,
+    p_start_date: fields.start_date,
+    p_end_date: fields.end_date,
+    p_time: fields.time,
+    p_memo: fields.memo,
+  };
+}
+
+// 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found' | 'network', errors }
 export function addPersonalEvent(input) {
   const user = getCurrentUser();
   if (!user) return { ok: false, reason: 'forbidden' };
   const { errors, fields } = validatePersonalEvent(input);
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteEventWrite('save_personal_event', personalEventArgs(null, input, fields));
 
   const event = { id: nextId('e', mockDb.events), ...fields, author_id: user.id, unit_category: null };
   mockDb.events.push(event);
@@ -328,6 +359,7 @@ export function updatePersonalEvent(id, input) {
   if (!event) return { ok: false, reason: 'not_found' };
   const { errors, fields } = validatePersonalEvent(input);
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteEventWrite('save_personal_event', personalEventArgs(id, input, fields));
 
   Object.assign(event, fields);
   return { ok: true, event: toCalendarEvent(event, user) };
@@ -339,6 +371,7 @@ export function deletePersonalEvent(id) {
   if (!user) return { ok: false, reason: 'forbidden' };
   const event = findOwnPersonalEvent(id, user);
   if (!event) return { ok: false, reason: 'not_found' };
+  if (REMOTE) return remoteWrite('delete_personal_event', { p_token: token, p_id: id });
   mockDb.events.splice(mockDb.events.indexOf(event), 1);
   return { ok: true };
 }
@@ -389,12 +422,24 @@ function validateUnitEvent(input) {
   return { errors, fields };
 }
 
-// 간부만. 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found', errors }
+function unitEventArgs(id, fields) {
+  return {
+    p_id: id,
+    p_category: fields.unit_category,
+    p_title: fields.title,
+    p_start_date: fields.start_date,
+    p_end_date: fields.end_date,
+    p_memo: fields.memo,
+  };
+}
+
+// 간부만. 결과: { ok: true, event } 또는 { ok: false, reason: 'forbidden' | 'invalid' | 'not_found' | 'network', errors }
 export function addUnitEvent(input, now = Date.now()) {
   const officer = requireOfficer();
   if (!officer) return { ok: false, reason: 'forbidden' };
   const { errors, fields } = validateUnitEvent(input);
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteEventWrite('save_unit_event', unitEventArgs(null, fields));
 
   const event = { id: nextId('e', mockDb.events), ...fields, author_id: officer.id };
   mockDb.events.push(event);
@@ -409,6 +454,7 @@ export function updateUnitEvent(id, input, now = Date.now()) {
   if (!event) return { ok: false, reason: 'not_found' };
   const { errors, fields } = validateUnitEvent(input);
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteEventWrite('save_unit_event', unitEventArgs(id, fields));
 
   Object.assign(event, fields);
   writeAuditLog(officer, 'update_unit_event', 'events', event.id, now);
@@ -420,6 +466,7 @@ export function deleteUnitEvent(id, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
   const event = mockDb.events.find((e) => e.id === id && e.type === 'unit');
   if (!event) return { ok: false, reason: 'not_found' };
+  if (REMOTE) return remoteWrite('delete_unit_event', { p_token: token, p_id: id });
   mockDb.events.splice(mockDb.events.indexOf(event), 1);
   writeAuditLog(officer, 'delete_unit_event', 'events', event.id, now);
   return { ok: true };

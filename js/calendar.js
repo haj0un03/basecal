@@ -7,6 +7,7 @@ import {
   addUnitEvent,
   updateUnitEvent,
   deleteUnitEvent,
+  NETWORK_ERROR,
 } from './data.js';
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -376,13 +377,14 @@ export function renderCalendar(container, user, today = new Date()) {
         edit.addEventListener('click', () => (isUnit ? openUnitEventDialog({ event: e }) : openEventDialog({ event: e })));
         const remove = el('button', 'small-button danger', '삭제');
         remove.type = 'button';
-        remove.addEventListener('click', () => {
+        remove.addEventListener('click', async () => {
           const question = isUnit
             ? `"${e.title}" 부대 일정을 지울까요? 모든 사람의 달력에서 사라집니다.`
             : `"${e.title}" 일정을 지울까요?`;
           if (!window.confirm(question)) return;
-          if (isUnit) deleteUnitEvent(e.id);
-          else deletePersonalEvent(e.id);
+          remove.disabled = true;
+          const result = await (isUnit ? deleteUnitEvent(e.id) : deletePersonalEvent(e.id));
+          if (result.reason === 'network') window.alert(NETWORK_ERROR);
           redraw('[data-action="add-event"]');
         });
         actions.append(edit, remove);
@@ -454,7 +456,7 @@ function openEventDialog({ event = null, date = null }) {
   f.time.value = event?.time ?? '';
   f.memo.value = event?.memo ?? '';
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     form.querySelectorAll('.field-error, .form-error').forEach((node) => {
       node.hidden = true;
@@ -467,7 +469,10 @@ function openEventDialog({ event = null, date = null }) {
       time: f.time.value,
       memo: f.memo.value,
     };
-    const result = editing ? updatePersonalEvent(event.id, input) : addPersonalEvent(input);
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await (editing ? updatePersonalEvent(event.id, input) : addPersonalEvent(input));
+    submit.disabled = false;
 
     if (result.ok) {
       eventDialog.close();
@@ -494,7 +499,7 @@ function openEventDialog({ event = null, date = null }) {
       return;
     }
     const error = form.querySelector('.form-error');
-    error.textContent = '이 일정은 고칠 수 없습니다. 다시 시도해 주세요.';
+    error.textContent = result.reason === 'network' ? NETWORK_ERROR : '이 일정은 고칠 수 없습니다. 다시 시도해 주세요.';
     error.hidden = false;
   });
 
@@ -560,7 +565,7 @@ function openUnitEventDialog({ event = null, date = null }) {
   form.querySelectorAll('input[name="unit_category"]').forEach((radio) => radio.addEventListener('change', syncCategory));
   syncCategory();
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     form.querySelectorAll('.field-error, .form-error').forEach((node) => {
       node.hidden = true;
@@ -572,7 +577,10 @@ function openUnitEventDialog({ event = null, date = null }) {
       end_date: f.end_date.value,
       memo: f.memo.value,
     };
-    const result = editing ? updateUnitEvent(event.id, input) : addUnitEvent(input);
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await (editing ? updateUnitEvent(event.id, input) : addUnitEvent(input));
+    submit.disabled = false;
 
     if (result.ok) {
       eventDialog.close();
@@ -599,7 +607,11 @@ function openUnitEventDialog({ event = null, date = null }) {
     }
     const error = form.querySelector('.form-error');
     error.textContent =
-      result.reason === 'forbidden' ? '간부만 부대 일정을 등록할 수 있습니다.' : '이 일정을 찾을 수 없습니다. 다른 간부가 지웠을 수 있습니다.';
+      result.reason === 'forbidden'
+        ? '간부만 부대 일정을 등록할 수 있습니다.'
+        : result.reason === 'network'
+          ? NETWORK_ERROR
+          : '이 일정을 찾을 수 없습니다. 다른 간부가 지웠을 수 있습니다.';
     error.hidden = false;
   });
 
