@@ -13,8 +13,9 @@ import {
 } from './data.js';
 import { renderCalendar } from './calendar.js';
 import { renderLeaveSection } from './leave.js';
+import { renderDutySection } from './duty.js';
 
-// 신청 탭은 휴가 영역(위)과 시설 영역(아래)을 한 화면에 이어서 보여준다.
+// 신청 탭은 휴가 영역(위), 근무 영역, 시설 영역(아래)을 한 화면에 이어서 보여준다.
 // 각 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
 // - all: 모두에게, soldier: 병사에게만, officer: 간부에게만 (간부 전용 표시와 함께)
 const TABS = {
@@ -101,6 +102,11 @@ function renderView(user) {
     leave.className = 'section leave-section';
     renderLeaveSection(leave, user);
     parts.push(leave);
+    // 그 아래: 근무 영역 (Phase 3.5)
+    const duty = document.createElement('section');
+    duty.className = 'section duty-section';
+    renderDutySection(duty, user);
+    parts.push(duty);
   }
   view.replaceChildren(...parts, ...sections.map((spec) => renderSection(spec, user)));
 

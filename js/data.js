@@ -208,9 +208,9 @@ export function getDemoAccounts() {
 // ── 달력 일정 ──────────────────────────────────────────────
 // 내 달력에는 부대 일정(모두 같은 한 건을 함께 본다)과 내가 쓴 일정이 보인다.
 
-// 개인 일정의 종류: 근무(duty), 기타(personal)
+// 개인 일정의 종류: 기타(personal)만. 근무는 근무 순번 편성으로 정해진다 (Phase 3.5)
 // 생일 종류는 2026-10-24 사용자 요청으로 뺐다. (매년 반복 일정을 보여 주는 코드는 남겨 둔다)
-const PERSONAL_KINDS = ['duty', 'other'];
+const PERSONAL_KINDS = ['other'];
 const MAX_TITLE_LENGTH = 30;
 const MAX_MEMO_LENGTH = 200;
 
@@ -269,6 +269,23 @@ export function getCalendarEvents(start, end) {
         result.push(toCalendarEvent(e, user));
       }
     });
+  // 순번으로 정해진 내 근무 (고치거나 지울 수 없다)
+  dutiesOf(user.id, start, end).forEach((d) => {
+    result.push({
+      id: `duty:${d.post_id}:${d.date}:${d.slot}`,
+      type: 'duty',
+      kind: 'duty',
+      title: `${d.post_name} ${d.label}`,
+      memo: '',
+      start_date: d.date,
+      end_date: d.date,
+      time: null,
+      unit_category: null,
+      repeat_yearly: false,
+      original_start_date: d.date,
+      editable: false,
+    });
+  });
   return result.sort(
     (a, b) =>
       a.start_date.localeCompare(b.start_date) ||
@@ -278,7 +295,7 @@ export function getCalendarEvents(start, end) {
 }
 
 function validatePersonalEvent(input) {
-  const kind = input.kind;
+  const kind = input.kind ?? 'other';
   const title = String(input.title ?? '').trim();
   const memo = String(input.memo ?? '').trim();
   const time = String(input.time ?? '').trim();
@@ -329,7 +346,7 @@ async function remoteEventWrite(name, args) {
 function personalEventArgs(id, input, fields) {
   return {
     p_id: id,
-    p_kind: input.kind,
+    p_kind: input.kind ?? 'other',
     p_title: fields.title,
     p_start_date: fields.start_date,
     p_end_date: fields.end_date,
@@ -1378,4 +1395,195 @@ export function applyAbsence(input, now = Date.now()) {
   };
   mockDb.leave_requests.push(request);
   return { ok: true, request: requestView(request) };
+}
+
+// ── 근무 순번 편성 (Phase 3.5) ─────────────────────────────
+// 근무자는 저장하지 않고 매번 계산한다 (prd.md "추가. 근무 순번 편성").
+// - 근무지의 순번 기준일(start_date)에 명단 1번이 첫 시간대, 2번이 둘째 시간대에 서고, 날마다 시간대 수만큼 순번이 넘어간다.
+// - 그날 나가 있는(휴가·외박·외출) 사람이나 이미 그날 근무가 있는 사람은 건너뛰고, 그날 순번에 없는 다음 사람이 대신 선다.
+//   다른 날의 순번은 밀리지 않는다.
+// - 간부의 손 수정·근무 교대 결과(duty_overrides)가 있으면 그 사람이 선다.
+// - 근무는 아직 가상 데이터다 (Supabase로는 휴가와 함께 옮긴다).
+
+const MAX_POST_NAME_LENGTH = 20;
+const MAX_SLOT_LABEL_LENGTH = 10;
+const MAX_SLOTS = 8;
+// 서버 모드에서 병사는 다른 병사의 명단을 받지 않는다. 근무를 서버로 옮기기 전까지는 가상 인원 이름으로 보여 준다.
+const MOCK_NAMES = new Map(mockDb.profiles.map((p) => [p.id, p.name]));
+
+function nameOf(userId) {
+  return mockDb.profiles.find((p) => p.id === userId)?.name ?? MOCK_NAMES.get(userId) ?? '(알 수 없음)';
+}
+
+function daysFrom(start, iso) {
+  const [a, b, c] = start.split('-').map(Number);
+  const [x, y, z] = iso.split('-').map(Number);
+  return Math.round((Date.UTC(x, y - 1, z) - Date.UTC(a, b - 1, c)) / 86400000);
+}
+
+function isAway(userId, iso) {
+  return mockDb.leave_requests.some(
+    (r) => r.user_id === userId && r.status === 'requested' && r.start_date <= iso && iso <= r.end_date,
+  );
+}
+
+function rosterOf(postId) {
+  return mockDb.duty_rosters
+    .filter((r) => r.post_id === postId)
+    .sort((a, b) => a.order - b.order)
+    .map((r) => r.user_id);
+}
+
+function activePosts() {
+  return mockDb.duty_posts.filter((p) => p.is_active).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// 한 근무지의 그날 근무. 결과: [{ slot, label, user_id(대신 설 사람이 없으면 null), source }]
+// source: rotation(순번) | substitute(대신 섬) | manual(간부 손 수정) | swap(교대)
+function postDay(post, iso) {
+  const roster = rosterOf(post.id);
+  const k = post.slots.length;
+  const n = roster.length;
+  if (iso < post.start_date || k === 0 || n < k) return [];
+  const base = daysFrom(post.start_date, iso) * k;
+  const natural = post.slots.map((_, s) => roster[(base + s) % n]);
+  const overrides = mockDb.duty_overrides.filter((o) => o.post_id === post.id && o.date === iso);
+  const taken = new Set(overrides.map((o) => o.user_id));
+  return post.slots.map((label, s) => {
+    const override = overrides.find((o) => o.slot === s);
+    if (override) return { slot: s, label, user_id: override.user_id, source: override.source };
+    let userId = natural[s];
+    let source = 'rotation';
+    if (taken.has(userId) || isAway(userId, iso)) {
+      source = 'substitute';
+      userId = null;
+      for (let i = 1; i < n; i += 1) {
+        const candidate = roster[(base + s + i) % n];
+        if (!taken.has(candidate) && !natural.includes(candidate) && !isAway(candidate, iso)) {
+          userId = candidate;
+          break;
+        }
+      }
+    }
+    if (userId) taken.add(userId);
+    return { slot: s, label, user_id: userId, source };
+  });
+}
+
+// 내 근무 (start~end). 결과: [{ date, post_id, post_name, slot, label, source }]
+function dutiesOf(userId, start, end) {
+  const result = [];
+  const posts = activePosts();
+  for (let iso = start; iso <= end; iso = nextDay(iso)) {
+    posts.forEach((post) => {
+      postDay(post, iso)
+        .filter((x) => x.user_id === userId)
+        .forEach((x) => result.push({ date: iso, post_id: post.id, post_name: post.name, slot: x.slot, label: x.label, source: x.source }));
+    });
+  }
+  return result;
+}
+
+export function getMyDuties(start, end) {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return dutiesOf(user.id, start, end);
+}
+
+// 근무표: 그날 근무지별 시간대와 근무자 (병사도 본다 — 교대할 상대를 고르기 위해)
+export function getDutyBoard(iso) {
+  if (!getCurrentUser() || !isDate(iso)) return [];
+  return activePosts().map((post) => ({
+    post_id: post.id,
+    post_name: post.name,
+    slots: postDay(post, iso).map((x) => ({ ...x, name: x.user_id ? nameOf(x.user_id) : null })),
+  }));
+}
+
+// 근무지 목록과 순번 명단
+export function getDutyPosts() {
+  if (!getCurrentUser()) return [];
+  return activePosts().map((post) => ({
+    id: post.id,
+    name: post.name,
+    slots: [...post.slots],
+    start_date: post.start_date,
+    roster: rosterOf(post.id).map((id) => ({ user_id: id, name: nameOf(id) })),
+  }));
+}
+
+function splitSlots(value) {
+  const list = Array.isArray(value) ? value : String(value ?? '').split(/[,\n]/);
+  return list.map((x) => String(x).trim().replace(/\s+/g, ' ')).filter(Boolean);
+}
+
+// 간부만. input: { id(고칠 때), name, slots: ['1번초', …] 또는 '1번초, 2번초', roster: [병사 id 순서대로] }
+// 시간대나 명단이 바뀌면 순번 기준일을 오늘로 잡아 새 명단 1번부터 다시 시작한다 (가정).
+// 결과: { ok: true, post } 또는 { ok: false, reason: 'forbidden' | 'not_found' | 'invalid', errors }
+export function saveDutyPost(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const existing = input.id ? mockDb.duty_posts.find((p) => p.id === input.id && p.is_active) : null;
+  if (input.id && !existing) return { ok: false, reason: 'not_found' };
+
+  const name = String(input.name ?? '').trim().replace(/\s+/g, ' ');
+  const slots = splitSlots(input.slots);
+  const roster = Array.isArray(input.roster) ? input.roster : [];
+  const errors = {};
+  if (!name) {
+    errors.name = '근무지 이름을 입력하세요.';
+  } else if (name.length > MAX_POST_NAME_LENGTH) {
+    errors.name = `근무지 이름은 ${MAX_POST_NAME_LENGTH}자 이하로 입력하세요.`;
+  } else if (activePosts().some((p) => p.name === name && p.id !== input.id)) {
+    errors.name = '같은 이름의 근무지가 있습니다.';
+  }
+  if (slots.length === 0) {
+    errors.slots = '시간대를 하나 이상 입력하세요.';
+  } else if (slots.length > MAX_SLOTS) {
+    errors.slots = `시간대는 ${MAX_SLOTS}개까지입니다.`;
+  } else if (slots.some((x) => x.length > MAX_SLOT_LABEL_LENGTH)) {
+    errors.slots = `시간대 이름은 ${MAX_SLOT_LABEL_LENGTH}자 이하로 입력하세요.`;
+  } else if (new Set(slots).size !== slots.length) {
+    errors.slots = '같은 이름의 시간대가 있습니다.';
+  }
+  const soldiers = new Set(mockDb.profiles.filter((p) => p.is_active && p.role === 'soldier').map((p) => p.id));
+  if (roster.length === 0) {
+    errors.roster = '순번 명단에 병사를 넣으세요.';
+  } else if (new Set(roster).size !== roster.length || roster.some((id) => !soldiers.has(id))) {
+    errors.roster = '명단을 다시 확인하세요.';
+  } else if (!errors.slots && roster.length < slots.length) {
+    errors.roster = `하루에 ${slots.length}명이 서므로 명단에 ${slots.length}명 이상 넣으세요.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const today = localISO(new Date(now));
+  const changed =
+    !existing ||
+    JSON.stringify(existing.slots) !== JSON.stringify(slots) ||
+    JSON.stringify(rosterOf(existing.id)) !== JSON.stringify(roster);
+  const post = existing ?? { id: nextId('d', mockDb.duty_posts), is_active: true };
+  post.name = name;
+  if (changed) {
+    post.slots = slots;
+    post.start_date = today;
+    // 바뀐 명단에는 오늘부터의 손 수정·교대가 맞지 않으므로 지운다
+    mockDb.duty_overrides = mockDb.duty_overrides.filter((o) => o.post_id !== post.id || o.date < today);
+    mockDb.duty_rosters = mockDb.duty_rosters
+      .filter((r) => r.post_id !== post.id)
+      .concat(roster.map((userId, i) => ({ post_id: post.id, user_id: userId, order: i + 1 })));
+  }
+  if (!existing) mockDb.duty_posts.push(post);
+  writeAuditLog(officer, existing ? 'update_duty_post' : 'create_duty_post', 'duty_posts', post.id, now);
+  return { ok: true, post: getDutyPosts().find((p) => p.id === post.id) };
+}
+
+// 간부만. 근무지를 없애면 그 근무지의 근무도 달력에서 사라진다.
+export function deleteDutyPost(id, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const post = mockDb.duty_posts.find((p) => p.id === id && p.is_active);
+  if (!post) return { ok: false, reason: 'not_found' };
+  post.is_active = false;
+  writeAuditLog(officer, 'delete_duty_post', 'duty_posts', post.id, now);
+  return { ok: true };
 }

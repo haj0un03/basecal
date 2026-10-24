@@ -23,6 +23,10 @@
 // - leave_rate_periods: 기간별 출타율(kind: total 또는 leave). 그 기간에는 기본 출타율 대신 이 값을 쓴다
 // - 가상 휴가 신청: 11/12~13에 4명(휴가 정원 4명이라 휴가 마감, 총 출타는 7명 중 4명), 11/5~6에 1명
 // - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
+// - duty_posts: 근무지. slots는 시간대 이름 목록(시간대마다 하루 1명), start_date는 순번 기준일(그날 명단 1번부터 시작).
+//   duty_rosters: 근무지별 순번 명단(order 순서). 근무자는 저장하지 않고 이것으로 매번 계산한다.
+//   duty_overrides: 간부의 손 수정·근무 교대로 바뀐 근무(slot은 시간대 번호, 0부터). duty_swaps: 근무 교대 요청.
+//   가상 근무지: 불침번 1~4번초(병사 10명), 위병소 주간·야간(병사 6명)
 
 export const mockDb = {
   "profiles": [
@@ -796,6 +800,114 @@ export const mockDb = {
       "slot_minutes": 60
     }
   ],
+  "duty_posts": [
+    {
+      "id": "d01",
+      "name": "불침번",
+      "slots": [
+        "1번초",
+        "2번초",
+        "3번초",
+        "4번초"
+      ],
+      "start_date": "2026-10-19",
+      "is_active": true
+    },
+    {
+      "id": "d02",
+      "name": "위병소",
+      "slots": [
+        "주간",
+        "야간"
+      ],
+      "start_date": "2026-10-19",
+      "is_active": true
+    }
+  ],
+  "duty_rosters": [
+    {
+      "post_id": "d01",
+      "user_id": "u01",
+      "order": 1
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u02",
+      "order": 2
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u03",
+      "order": 3
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u04",
+      "order": 4
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u09",
+      "order": 5
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u10",
+      "order": 6
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u11",
+      "order": 7
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u12",
+      "order": 8
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u13",
+      "order": 9
+    },
+    {
+      "post_id": "d01",
+      "user_id": "u14",
+      "order": 10
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u15",
+      "order": 1
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u16",
+      "order": 2
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u17",
+      "order": 3
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u18",
+      "order": 4
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u19",
+      "order": 5
+    },
+    {
+      "post_id": "d02",
+      "user_id": "u20",
+      "order": 6
+    }
+  ],
+  "duty_overrides": [],
+  "duty_swaps": [],
   "reservations": [],
   "audit_logs": []
 };

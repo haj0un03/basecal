@@ -425,14 +425,7 @@ function openEventDialog({ event = null, date = null }) {
   eventDialog.innerHTML = `
     <form class="dialog-body" novalidate>
       <h2 id="event-dialog-title">${editing ? '일정 수정' : '일정 추가'}</h2>
-      <fieldset class="field">
-        <legend class="field-label">종류</legend>
-        <div class="choice-row">
-          <label class="choice"><input type="radio" name="kind" value="duty"> 근무</label>
-          <label class="choice"><input type="radio" name="kind" value="other"> 기타</label>
-        </div>
-        <span class="field-error" data-error-for="kind" hidden></span>
-      </fieldset>
+      <p class="help">근무는 신청 탭의 근무 순번으로 정해져 달력에 자동으로 보입니다.</p>
       ${field('title', '제목', '<input name="title" maxlength="30" required>')}
       ${field('start_date', '시작 날짜', '<input name="start_date" type="date" required>')}
       ${field('end_date', '끝나는 날짜 (하루면 비워 두기)', '<input name="end_date" type="date">')}
@@ -446,9 +439,6 @@ function openEventDialog({ event = null, date = null }) {
 
   const form = eventDialog.querySelector('form');
   const f = form.elements;
-  // 예전에 만든 생일 일정을 고칠 때는 기타로 다룬다.
-  const kind = event?.kind === 'duty' ? 'duty' : 'other';
-  form.querySelector(`input[name="kind"][value="${kind}"]`).checked = true;
   f.title.value = event?.title ?? '';
   // 매년 반복 일정은 처음 등록한 날짜를 고친다.
   f.start_date.value = event ? event.original_start_date : date;
@@ -462,7 +452,7 @@ function openEventDialog({ event = null, date = null }) {
       node.hidden = true;
     });
     const input = {
-      kind: f.kind.value,
+      kind: 'other',
       title: f.title.value,
       start_date: f.start_date.value,
       end_date: f.end_date.value,
