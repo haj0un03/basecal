@@ -15,28 +15,36 @@ import { renderCalendar } from './calendar.js';
 import { renderLeaveSection } from './leave.js';
 import { renderDutySection } from './duty.js';
 
-// 신청 탭은 휴가 영역(위), 근무 영역, 시설 영역(아래)을 한 화면에 이어서 보여준다.
-// 각 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
+// 신청 탭은 위쪽 탭(휴가·근무·시설)으로 영역을 하나씩 보여준다 (2026-11-07 사용자 요청).
+// 주소: #apply/leave, #apply/duty, #apply/facility (#apply는 휴가)
+// 아직 만들지 않은 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
 // - all: 모두에게, soldier: 병사에게만, officer: 간부에게만 (간부 전용 표시와 함께)
 const TABS = {
-  calendar: {
-    title: '달력',
-    sections: [],
-  },
-  apply: {
-    title: '신청',
-    sections: [
-      {
-        heading: '시설',
-        all: '시설 목록, 날짜별 시간대 현황, 예약 신청, 내 예약은 Phase 4에서 만듭니다.',
-        officer: '예약 승인 대기 목록은 Phase 4에서 만듭니다.',
-      },
-    ],
-  },
+  calendar: { title: '달력' },
+  apply: { title: '신청' },
 };
 
-// 예전 탭 주소로 들어와도 신청 탭을 연다.
-const OLD_TABS = { leave: 'apply', facility: 'apply' };
+const APPLY_PANELS = [
+  { key: 'leave', label: '휴가' },
+  { key: 'duty', label: '근무' },
+  {
+    key: 'facility',
+    label: '시설',
+    placeholder: {
+      heading: '시설',
+      all: '시설 목록, 날짜별 시간대 현황, 예약 신청, 내 예약은 Phase 4에서 만듭니다.',
+      officer: '예약 승인 대기 목록은 Phase 4에서 만듭니다.',
+    },
+  },
+];
+
+// 예전 탭 주소로 들어와도 신청 탭의 그 영역을 연다.
+const OLD_TABS = { leave: 'apply/leave', facility: 'apply/facility' };
+
+// 신청 탭에서 마지막으로 본 영역. 하단 "신청" 탭을 누르면 그 영역으로 돌아간다.
+let lastPanel = 'leave';
+// 마지막으로 그린 주소. 탭이나 영역이 바뀌면 화면 맨 위부터 보여 준다.
+let lastRoute = null;
 
 const ROLE_LABELS = { soldier: '병사', officer: '간부' };
 
@@ -46,10 +54,12 @@ const topbarTitle = document.getElementById('topbar-title');
 const userMenu = document.getElementById('user-menu');
 const memberDialog = document.getElementById('member-dialog');
 
-function currentTab() {
+function currentRoute() {
   const hash = location.hash.slice(1);
-  const tab = OLD_TABS[hash] ?? hash;
-  return TABS[tab] ? tab : 'calendar';
+  const [tab, panel] = (OLD_TABS[hash] ?? hash).split('/');
+  if (!TABS[tab]) return { tab: 'calendar', panel: null };
+  if (tab !== 'apply') return { tab, panel: null };
+  return { tab, panel: APPLY_PANELS.some((x) => x.key === panel) ? panel : 'leave' };
 }
 
 function formatCode(code) {
@@ -83,9 +93,28 @@ function renderSection(spec, user) {
   return section;
 }
 
+// 신청 탭 위쪽 탭: 휴가 | 근무 | 시설
+function applyNav(panel) {
+  const nav = document.createElement('nav');
+  nav.className = 'subtabs';
+  nav.setAttribute('aria-label', '신청 메뉴');
+  APPLY_PANELS.forEach((x) => {
+    const link = document.createElement('a');
+    link.className = 'subtab';
+    link.href = `#apply/${x.key}`;
+    link.dataset.panel = x.key;
+    link.textContent = x.label;
+    if (x.key === panel) link.setAttribute('aria-current', 'page');
+    nav.append(link);
+  });
+  return nav;
+}
+
 function renderView(user) {
-  const tab = currentTab();
-  const { title, sections } = TABS[tab];
+  const { tab, panel } = currentRoute();
+  const { title } = TABS[tab];
+  // 위쪽 탭을 눌러 다시 그릴 때 그 탭에 초점을 둔다
+  const focusedPanel = document.activeElement?.closest?.('.subtab')?.dataset.panel;
 
   const heading = document.createElement('h1');
   heading.textContent = title;
@@ -97,20 +126,27 @@ function renderView(user) {
     parts.push(calendar);
   }
   if (tab === 'apply') {
-    // 신청 탭 맨 위: 휴가 영역 (그 아래 시설 영역)
-    const leave = document.createElement('section');
-    leave.className = 'section leave-section';
-    renderLeaveSection(leave, user);
-    parts.push(leave);
-    // 그 아래: 근무 영역 (Phase 3.5)
-    const duty = document.createElement('section');
-    duty.className = 'section duty-section';
-    renderDutySection(duty, user);
-    parts.push(duty);
+    lastPanel = panel;
+    parts.push(applyNav(panel));
+    const spec = APPLY_PANELS.find((x) => x.key === panel);
+    if (spec.placeholder) {
+      parts.push(renderSection(spec.placeholder, user));
+    } else {
+      const section = document.createElement('section');
+      section.className = `section ${panel}-section`;
+      if (panel === 'leave') renderLeaveSection(section, user);
+      if (panel === 'duty') renderDutySection(section, user);
+      parts.push(section);
+    }
   }
-  view.replaceChildren(...parts, ...sections.map((spec) => renderSection(spec, user)));
+  view.replaceChildren(...parts);
+  const route = `${tab}/${panel}`;
+  if (lastRoute && route !== lastRoute) window.scrollTo(0, 0);
+  lastRoute = route;
+  if (focusedPanel) view.querySelector(`.subtab[data-panel="${focusedPanel}"]`)?.focus();
 
   document.querySelectorAll('.tab').forEach((link) => {
+    if (link.dataset.tab === 'apply') link.href = `#apply/${lastPanel}`;
     if (link.dataset.tab === tab) {
       link.setAttribute('aria-current', 'page');
     } else {
