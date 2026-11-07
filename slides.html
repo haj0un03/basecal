@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부대 달력 발표</title>
+<!--
+  발표용 슬라이드 (앱과 별개 파일)
+  - ← → 키, 스페이스, Page Up/Down, 화면 클릭으로 넘긴다. F 키: 전체 화면. Home/End: 처음/끝
+  - 외부 글꼴·라이브러리를 쓰지 않는다 (인터넷 없이도 열린다)
+  - 발표자 이름은 아래 "발표자 이름" 한 곳만 바꾸면 된다
+-->
+<style>
+  :root {
+    --bg: #f7f8f6;
+    --surface: #ffffff;
+    --ink: #15201c;
+    --muted: #4f5b56;
+    --accent: #2f5d50;
+    --accent-soft: #e3ece8;
+    --line: #d5dcd8;
+    --leave: #2e8b57;
+    --duty: #b26a00;
+    --unit: #2f6fb3;
+    --facility: #b0466f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    overflow: hidden;
+    word-break: keep-all;
+  }
+
+  /* 한 화면에 한 장. 글자 크기는 화면 크기에 맞춰 자란다 (프로젝터에서도 크게) */
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    padding: 6vh 7vw 9vh;
+    font-size: clamp(18px, 2.6vw, 40px);
+    line-height: 1.45;
+  }
+  .slide.active { display: flex; }
+  .fit { display: flex; flex-direction: column; align-items: inherit; }
+
+  .kicker {
+    margin: 0 0 1.2vh;
+    color: var(--accent);
+    font-size: 0.8em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+  h1, h2 { margin: 0 0 4vh; line-height: 1.2; }
+  h1 { font-size: 2.9em; letter-spacing: -0.02em; }
+  h2 { font-size: 1.75em; letter-spacing: -0.01em; }
+  h2::after {
+    content: '';
+    display: block;
+    width: 3.2em;
+    height: 0.16em;
+    margin-top: 2vh;
+    border-radius: 1em;
+    background: var(--accent);
+  }
+  p { margin: 0; }
+  strong { color: var(--accent); }
+
+  /* 표지 */
+  .cover { background: var(--accent); color: #fff; }
+  .cover .kicker { color: #cfe3da; }
+  .cover h1 { margin-bottom: 3vh; }
+  .cover .lead { font-size: 1.15em; color: #eaf3ef; }
+  .cover .who {
+    margin-top: 8vh;
+    padding-top: 3vh;
+    border-top: 2px solid rgba(255, 255, 255, 0.35);
+    font-size: 0.9em;
+    color: #eaf3ef;
+  }
+  .cover .who b { color: #fff; font-size: 1.15em; }
+
+  /* 불편 → 해결 표 */
+  .pairs { display: grid; gap: 2.2vh; }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 2vw;
+  }
+  .pair .before, .pair .after {
+    padding: 1.6vh 1.6vw;
+    border-radius: 12px;
+    font-size: 0.9em;
+  }
+  .pair .before { background: var(--surface); border: 2px solid var(--line); color: var(--muted); }
+  .pair .after { background: var(--accent-soft); font-weight: 700; }
+  .pair .arrow { color: var(--accent); font-size: 1.2em; font-weight: 700; }
+
+  /* 기능 카드 */
+  .who-line { margin-bottom: 4vh; font-size: 0.95em; color: var(--muted); }
+  .who-line b { color: var(--ink); }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2vw; }
+  .card {
+    padding: 3vh 1.8vw;
+    border-radius: 16px;
+    background: var(--surface);
+    border-top: 0.35em solid var(--c, var(--accent));
+    box-shadow: 0 2px 10px rgba(21, 32, 28, 0.08);
+  }
+  .card .num { color: var(--c, var(--accent)); font-weight: 800; font-size: 0.85em; }
+  .card h3 { margin: 0.6vh 0 1.6vh; font-size: 1.15em; line-height: 1.25; }
+  .card p { font-size: 0.78em; color: var(--muted); }
+  .extra {
+    margin-top: 3.5vh;
+    padding: 1.6vh 1.8vw;
+    border-radius: 12px;
+    border-left: 0.3em solid var(--duty);
+    background: var(--surface);
+    font-size: 0.82em;
+  }
+
+  /* 시연 */
+  .demo { text-align: center; align-items: center; }
+  .demo h2::after { margin-left: auto; margin-right: auto; }
+  .url {
+    display: inline-block;
+    margin: 1vh 0 5vh;
+    padding: 2.4vh 3vw;
+    border-radius: 18px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1.55em;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  .accounts { display: flex; gap: 3vw; justify-content: center; font-size: 0.85em; }
+  .account {
+    padding: 1.6vh 2vw;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 2px solid var(--line);
+  }
+  .account b { display: block; color: var(--accent); }
+  .account code { font-family: Consolas, "Courier New", monospace; font-size: 1.05em; letter-spacing: 0.12em; }
+  .demo .note { margin-top: 4vh; font-size: 0.75em; color: var(--muted); }
+
+  /* 목록 두 칸 */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 3vw; }
+  .cols h3 { margin: 0 0 2vh; font-size: 1.05em; color: var(--accent); }
+  .cols h3.hard { color: var(--duty); }
+  ul.points { margin: 0; padding: 0; list-style: none; display: grid; gap: 1.8vh; }
+  ul.points li {
+    position: relative;
+    padding-left: 1.2em;
+    font-size: 0.86em;
+  }
+  ul.points li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 0.45em;
+    height: 0.45em;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .cols .hard + ul.points li::before { background: var(--duty); }
+  ul.points small { display: block; color: var(--muted); font-size: 0.85em; }
+
+  /* 숫자 띠 */
+  .stats { display: flex; gap: 2vw; margin-top: 4vh; }
+  .stat {
+    flex: 1;
+    padding: 1.6vh 1.4vw;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    text-align: center;
+    font-size: 0.75em;
+  }
+  .stat b { display: block; font-size: 1.9em; color: var(--accent); line-height: 1.15; }
+
+  /* 계획: 단계 */
+  .steps { display: grid; gap: 2vh; }
+  .step {
+    display: grid;
+    grid-template-columns: 6.5em 1fr;
+    align-items: baseline;
+    gap: 2vw;
+    padding: 1.8vh 1.8vw;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 2px solid var(--line);
+    font-size: 0.86em;
+  }
+  .step .when { font-weight: 800; color: var(--accent); }
+  .step small { display: block; color: var(--muted); font-size: 0.85em; }
+
+  /* 마무리 */
+  .end { background: var(--accent); color: #fff; text-align: center; align-items: center; }
+  .end h1 { margin-bottom: 4vh; }
+  .end .url { background: #fff; color: var(--accent); }
+  .end p { color: #eaf3ef; }
+
+  /* 아래 진행 표시 */
+  .bar {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    height: 0.7vh;
+    min-height: 5px;
+    background: var(--accent);
+    transition: width 0.25s ease;
+  }
+  .page {
+    position: fixed;
+    right: 2.2vw;
+    bottom: 2.2vh;
+    font-size: clamp(12px, 1.2vw, 20px);
+    color: var(--muted);
+  }
+  body.dark-slide .page { color: #cfe3da; }
+  body.dark-slide .bar { background: #fff; }
+
+  @media (max-aspect-ratio: 1/1) {
+    /* 세로 화면(휴대폰)에서 미리 볼 때 */
+    .slide { font-size: clamp(15px, 4.2vw, 28px); padding: 5vh 6vw 8vh; }
+    .cards, .cols { grid-template-columns: 1fr; }
+    .pair { grid-template-columns: 1fr; }
+    .pair .arrow { display: none; }
+    .accounts, .stats { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 1. 표지 -->
+<section class="slide cover" data-dark>
+  <p class="kicker">부대 AI 동아리 · 바이브코딩 과제</p>
+  <h1>부대 달력</h1>
+  <p class="lead">부대 일정 · 출타 · 근무 · 시설 예약을<br>달력 하나에서</p>
+  <!-- 발표자 이름: 아래 ○○○를 바꾸세요 -->
+  <p class="who">발표 <b>○○○</b></p>
+</section>
+
+<!-- 2. 왜 만들었나 -->
+<section class="slide">
+  <p class="kicker">왜 만들었나</p>
+  <h2>필요한 정보가 흩어져 있어서<br>매번 물어보고 맞춰 봐야 했습니다</h2>
+  <div class="pairs">
+    <div class="pair">
+      <p class="before">그날 휴가 자리가 남았는지<br>간부에게 물어봐야 안다</p>
+      <span class="arrow">→</span>
+      <p class="after">정원이 찬 날은 달력에<br>회색 "마감"으로 보인다</p>
+    </div>
+    <div class="pair">
+      <p class="before">남은 휴가 일수를<br>종류별로 직접 계산한다</p>
+      <span class="arrow">→</span>
+      <p class="after">연가·포상·위로휴가<br>남은 일수를 자동 계산</p>
+    </div>
+    <div class="pair">
+      <p class="before">근무표·부대 일정·시설 현황을<br>게시판, 말, 직접 가서 확인한다</p>
+      <span class="arrow">→</span>
+      <p class="after">각자의 달력에<br>한 번에 표시된다</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3. 이 앱은 무엇인가 -->
+<section class="slide">
+  <p class="kicker">이 앱은 무엇인가</p>
+  <h2>병사와 간부가 함께 쓰는 부대 달력</h2>
+  <p class="who-line"><b>병사</b>는 내 달력에서 확인하고 신청 · <b>간부</b>는 같은 화면에서 등록하고 승인</p>
+  <div class="cards">
+    <div class="card" style="--c: var(--unit)">
+      <span class="num">1</span>
+      <h3>달력과 부대 일정</h3>
+      <p>간부가 등록하면 모두의 달력에 공휴일처럼 표시</p>
+    </div>
+    <div class="card" style="--c: var(--leave)">
+      <span class="num">2</span>
+      <h3>휴가·외박·외출과 출타율</h3>
+      <p>신청 즉시 자리 확보, 정원이 차면 자동 마감</p>
+    </div>
+    <div class="card" style="--c: var(--facility)">
+      <span class="num">3</span>
+      <h3>시설 예약</h3>
+      <p>날짜 → 약도 → 시간, 먼저 신청한 사람 우선</p>
+    </div>
+  </div>
+  <p class="extra"><b style="color: var(--duty)">+ 근무 순번</b> &nbsp;순번만 정하면 근무자 자동 편성 · 병사끼리 교대 요청</p>
+</section>
+
+<!-- 4. 시연 -->
+<section class="slide demo">
+  <p class="kicker">시연</p>
+  <h2>지금부터 실제 앱을 보여드립니다</h2>
+  <p class="url">basecal-tawny.vercel.app</p>
+  <div class="accounts">
+    <p class="account"><b>병사로 들어가기</b>김하늘 · <code>CZUTP6</code></p>
+    <p class="account"><b>간부로 들어가기</b>백지훈 · <code>YCM2Y5</code></p>
+  </div>
+  <p class="note">휴대폰으로도 열립니다 · 이름과 일정은 모두 지어낸 연습용 데이터입니다</p>
+</section>
+
+<!-- 5. 배운 점 · 어려웠던 점 -->
+<section class="slide">
+  <p class="kicker">만들면서</p>
+  <h2>배운 점과 어려웠던 점</h2>
+  <div class="cols">
+    <div>
+      <h3>배운 점</h3>
+      <ul class="points">
+        <li>먼저 문서(PRD)로 정하고 만든다<small>정해져야 AI도 헤매지 않는다</small></li>
+        <li>한 번에 한 단계씩, 확인하고 넘어간다<small>단계마다 자동 점검 후 저장</small></li>
+        <li>말 한마디가 오해를 만든다<small>"신청" → "자리 확보"로 바꿈</small></li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="hard">어려웠던 점</h3>
+      <ul class="points">
+        <li>둘이 동시에 마지막 자리를 누르면?<small>서버가 한 번에 하나씩 확인·저장</small></li>
+        <li>보여 줄 것과 숨길 것<small>병사에겐 이름 없이 남은 자리만</small></li>
+        <li>근무 교대가 복잡했다<small>근무표에서 바로 누르고 사유만</small></li>
+      </ul>
+    </div>
+  </div>
+  <div class="stats">
+    <p class="stat"><b>4</b>핵심 기능</p>
+    <p class="stat"><b>약 900개</b>자동 점검</p>
+    <p class="stat"><b>6단계</b>나눠서 개발</p>
+  </div>
+</section>
+
+<!-- 6. 앞으로의 계획 -->
+<section class="slide">
+  <p class="kicker">앞으로</p>
+  <h2>함께 보는 부대 현황판으로</h2>
+  <div class="steps">
+    <p class="step"><span class="when">다음</span><span>근무·시설 예약까지 서버에 저장<small>휴대폰 두 대에서 같은 화면, 동시에 신청해도 정원을 넘지 않게</small></span></p>
+    <p class="step"><span class="when">그다음</span><span>달력 탭을 현황판으로<small>간부: 날짜마다 "출타 4/7"과 근무자 · 병사: "자리 2"처럼 숫자만</small></span></p>
+    <p class="step"><span class="when">시범 운영</span><span>우리 부대에서 써 보기<small>내부망 접속·보안 승인을 거쳐, 실제 운영 전 간부와 함께 점검</small></span></p>
+  </div>
+</section>
+
+<!-- 7. 마무리 -->
+<section class="slide end" data-dark>
+  <h1>감사합니다</h1>
+  <p class="url">basecal-tawny.vercel.app</p>
+  <p>질문 받겠습니다</p>
+</section>
+
+<div class="bar" aria-hidden="true"></div>
+<p class="page" aria-live="polite"></p>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const bar = document.querySelector('.bar');
+  const page = document.querySelector('.page');
+  let index = 0;
+
+  // 장마다 내용을 한 상자(.fit)에 담아 높이를 잰다
+  slides.forEach((s) => {
+    const fit = document.createElement('div');
+    fit.className = 'fit';
+    fit.append(...s.childNodes);
+    s.append(fit);
+  });
+
+  // 내용이 화면보다 크면 글자를 조금씩 줄인다 (어떤 화면에서도 잘리지 않게)
+  function fitSlide(s) {
+    s.style.fontSize = '';
+    const fit = s.querySelector('.fit');
+    const style = getComputedStyle(s);
+    const room = () => s.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    let size = parseFloat(style.fontSize);
+    const min = size * 0.6;
+    while (fit.offsetHeight > room() && size > min) {
+      size *= 0.95;
+      s.style.fontSize = `${size}px`;
+    }
+  }
+
+  function show(n) {
+    index = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, i) => s.classList.toggle('active', i === index));
+    fitSlide(slides[index]);
+    document.body.classList.toggle('dark-slide', slides[index].hasAttribute('data-dark'));
+    bar.style.width = `${((index + 1) / slides.length) * 100}%`;
+    page.textContent = `${index + 1} / ${slides.length}`;
+    history.replaceState(null, '', `#${index + 1}`);
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(e.key)) { e.preventDefault(); show(index + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(index - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'f' || e.key === 'F') {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen?.();
+    }
+  });
+  window.addEventListener('resize', () => fitSlide(slides[index]));
+  // 화면 왼쪽 1/3을 누르면 이전, 나머지를 누르면 다음
+  document.addEventListener('click', (e) => show(e.clientX < window.innerWidth / 3 ? index - 1 : index + 1));
+
+  // 주소 끝의 #3처럼 몇 번째 장인지 기억한다 (새로고침해도 그 장)
+  show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+</script>
+</body>
+</html>

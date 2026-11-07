@@ -110,6 +110,8 @@
 
 2026-11-07.
 
+- **발표 슬라이드 `slides.html` (사용자 요청):** 프로젝트 폴더에 한 파일로. 7장(표지·왜·무엇·시연·배운 점·계획·마무리), ← → 키로 넘김, F 키 전체 화면, 외부 파일 없이 열림, 내용이 화면보다 크면 글자를 자동으로 줄임. 1280×720으로 7장 모두 화면 확인. 발표자 이름은 ○○○로 비워 둠(실명은 저장소에 커밋하지 않기)
+
 - **Phase 5-3b 출타율·휴가·외박·외출 신청을 서버로 → 완료 (사용자가 04 SQL 실행 후 브라우저에서 확인: 마감·남은 자리, 신청이 새로고침 뒤에도 남음, 간부 출타 현황에 보임, 취소)**
   - `supabase/04_absence.sql`: leave_settings, leave_rate_periods(훈련 일정 연결 포함), leave_requests, leave_request_items 표(가상 데이터 그대로: 총 35%·휴가 20%, 11/12~13 휴가 4명, 11/5~6 1명). 서버 함수 apply_leave, apply_absence, cancel_leave_request, set_default_rates, add_rate_period, delete_rate_period, set_training_rate, remove_training_rate
   - **정원 확인과 저장을 서버 함수 하나에서 한 번에:** 신청 함수는 모두 같은 잠금을 잡고 날짜·겹침·정원·남은 일수·외박/외출 횟수·포상을 확인한 뒤 저장한다 → 두 사람이 동시에 마지막 자리를 신청해도 한 명만 들어간다
