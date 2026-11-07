@@ -1924,3 +1924,46 @@ export function decideDutySwap(id, decision, rejectReason = '', now = Date.now()
   writeAuditLog(officer, decision === 'approve' ? 'approve_duty_swap' : 'reject_duty_swap', 'duty_swaps', s.id, now);
   return { ok: true };
 }
+
+// 교대 요청 창에서 고를 수 있는 것만 보여 준다 (2026-11-07 사용자 요청: 설 수 없는 사람 숨기기)
+// 내 근무에서 시작: 그날 내 근무를 설 수 있는 병사와, 그 병사의 근무 중 내가 맞바꿔 설 수 있는 근무
+// 결과: [{ id, name, duties: [{ post_id, post_name, date, slot, label }] }] (duties가 비어 있으면 대신 서기만 가능)
+export function getSwapChoices(myDuty, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return [];
+  const mine = cleanDuty(myDuty);
+  if (!mine || pendingSwapOn(mine)) return [];
+  const win = getApplyWindow(now);
+  return getSwapPartners()
+    .filter((p) => !checkSwap({ kind: 'cover', requester_id: user.id, requester_duty: mine, partner_id: p.id, partner_duty: null }, now))
+    .map((p) => ({
+      ...p,
+      duties: dutiesOf(p.id, win.start, win.end).filter((d) => {
+        const theirs = { post_id: d.post_id, date: d.date, slot: d.slot };
+        return (
+          !pendingSwapOn(theirs) &&
+          !checkSwap({ kind: 'swap', requester_id: user.id, requester_duty: mine, partner_id: p.id, partner_duty: theirs }, now)
+        );
+      }),
+    }));
+}
+
+// 근무표의 다른 병사 근무에서 시작: 그 근무와 맞바꿀 수 있는 내 근무
+// 결과: { partner: { id, name }, duties: [내 근무…] } 또는 null
+export function getMySwapChoices(theirDuty, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return null;
+  const theirs = cleanDuty(theirDuty);
+  if (!theirs || pendingSwapOn(theirs)) return null;
+  const partnerId = holderOf(theirs);
+  if (!partnerId || partnerId === user.id) return null;
+  const win = getApplyWindow(now);
+  const duties = dutiesOf(user.id, win.start, win.end).filter((d) => {
+    const mine = { post_id: d.post_id, date: d.date, slot: d.slot };
+    return (
+      !pendingSwapOn(mine) &&
+      !checkSwap({ kind: 'swap', requester_id: user.id, requester_duty: mine, partner_id: partnerId, partner_duty: theirs }, now)
+    );
+  });
+  return { partner: { id: partnerId, name: nameOf(partnerId) }, duties };
+}
