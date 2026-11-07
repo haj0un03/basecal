@@ -1,6 +1,6 @@
 // 신청 탭 근무 영역 (Phase 3.5, prd.md "추가. 근무 순번 편성")
 // - 병사: 내 근무(오늘부터 한 달), 날짜별 근무표
-// - 간부: 날짜별 근무표, 근무지·시간대·순번 명단 만들기·고치기·없애기
+// - 간부: 날짜별 근무표와 근무자 손 수정(3.5-2), 근무지·시간대·순번 명단 만들기·고치기·없애기
 // 근무자는 순번으로 계산되어 각자의 달력에 "근무"로 자동 표시된다.
 import {
   getApplyWindow,
@@ -10,6 +10,9 @@ import {
   saveDutyPost,
   deleteDutyPost,
   getSoldiers,
+  getDutyCandidates,
+  setDutyOverride,
+  clearDutyOverride,
   NETWORK_ERROR,
 } from './data.js';
 
@@ -123,6 +126,11 @@ function boardParts(redraw, user) {
   }
   parts.push(nav);
 
+  if (user.role === 'officer') {
+    parts.push(el('p', 'help', '오늘부터 한 달 안의 근무는 "바꾸기"로 근무자를 바꿀 수 있습니다. 바꾼 날만 달라지고 나머지 날은 순번대로입니다.'));
+  }
+  const win = getApplyWindow();
+  const editable = user.role === 'officer' && date >= win.start && date <= win.end;
   const board = getDutyBoard(date);
   if (board.length === 0) {
     parts.push(el('p', 'cal-empty', user.role === 'officer' ? '근무지가 없습니다. 아래에서 근무지를 추가하세요.' : '정해진 근무지가 없습니다.'));
@@ -144,6 +152,12 @@ function boardParts(redraw, user) {
         row.append(el('span', 'duty-slot-label', slot.label), el('span', 'duty-slot-name', slot.name ?? '근무자 없음'));
         if (!slot.user_id) row.classList.add('empty');
         if (SOURCE_LABELS[slot.source]) row.append(el('span', 'duty-slot-source', SOURCE_LABELS[slot.source]));
+        if (editable) {
+          const edit = button('small-button', '바꾸기', null, () => openOverrideDialog(redraw, date, post, slot));
+          edit.dataset.override = `${post.post_id}:${slot.slot}`;
+          edit.setAttribute('aria-label', `${shortDay(date)} ${post.post_name} ${slot.label} 근무자 바꾸기`);
+          row.append(edit);
+        }
         rows.append(row);
       });
       box.append(rows);
@@ -318,4 +332,79 @@ function openPostDialog(redraw, post = null) {
   form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
   dutyDialog.showModal();
   f.name.focus();
+}
+
+// ── 간부: 근무자 손 수정 ────────────────────────────────────
+
+function openOverrideDialog(redraw, date, post, slot) {
+  const focusBack = `[data-override="${post.post_id}:${slot.slot}"]`;
+  const candidates = getDutyCandidates(post.post_id, date, slot.slot);
+  const changed = slot.source === 'manual' || slot.source === 'swap';
+  dutyDialog.innerHTML = `
+    <form class="dialog-body" novalidate>
+      <h2 id="duty-dialog-title">근무자 바꾸기</h2>
+      <p class="help duty-override-target"></p>
+      <label class="field">
+        <span class="field-label">이 근무를 설 병사</span>
+        <select name="user_id"></select>
+        <span class="field-error" data-error-for="user_id" hidden></span>
+      </label>
+      <p class="help">출타 중이거나 그날 이미 근무가 있는 병사는 고를 수 없습니다.</p>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">바꾸기</button>
+      ${changed ? '<button type="button" class="secondary-button" data-action="reset-override">순번대로 되돌리기</button>' : ''}
+      <button type="button" class="secondary-button" data-action="close">취소</button>
+    </form>
+  `;
+  const form = dutyDialog.querySelector('form');
+  const select = form.elements.user_id;
+  form.querySelector('.duty-override-target').textContent =
+    `${shortDay(date)} ${post.post_name} ${slot.label} · 지금: ${slot.name ?? '근무자 없음'}${SOURCE_LABELS[slot.source] ? ` (${SOURCE_LABELS[slot.source]})` : ''}`;
+  select.append(
+    ...candidates.map((c) => {
+      const note = c.current ? ' — 지금 근무자' : c.blocked ? ` — ${c.blocked}` : '';
+      const option = el('option', '', `${c.name} · ${c.position}${note}`);
+      option.value = c.id;
+      option.disabled = c.current || Boolean(c.blocked);
+      return option;
+    }),
+  );
+  const firstFree = candidates.find((c) => !c.current && !c.blocked);
+  if (firstFree) select.value = firstFree.id;
+
+  const showResult = (result) => {
+    if (result.ok) {
+      dutyDialog.close();
+      redraw(focusBack);
+      return;
+    }
+    if (result.reason === 'invalid') {
+      const node = form.querySelector('[data-error-for="user_id"]');
+      node.textContent = result.errors.user_id;
+      node.hidden = false;
+      select.focus();
+      return;
+    }
+    const error = form.querySelector('.form-error');
+    error.textContent =
+      result.reason === 'network' ? NETWORK_ERROR : result.reason === 'not_found' ? '이 근무를 찾을 수 없습니다.' : '간부만 근무자를 바꿀 수 있습니다.';
+    error.hidden = false;
+  };
+  const clearErrors = () =>
+    form.querySelectorAll('.field-error, .form-error').forEach((node) => {
+      node.hidden = true;
+    });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearErrors();
+    showResult(await setDutyOverride({ post_id: post.post_id, date, slot: slot.slot, user_id: select.value }));
+  });
+  form.querySelector('[data-action="reset-override"]')?.addEventListener('click', async () => {
+    clearErrors();
+    showResult(await clearDutyOverride({ post_id: post.post_id, date, slot: slot.slot }));
+  });
+  form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
+  dutyDialog.showModal();
+  select.focus();
 }

@@ -22,6 +22,7 @@ import {
   getMyAbsenceQuota,
   cancelLeaveRequest,
   getDayAvailability,
+  getMyDutyDates,
   getAbsenceRoster,
   getRateSettings,
   setDefaultRates,
@@ -479,6 +480,8 @@ function applyParts(redraw, user, summary) {
   const remaining = Object.fromEntries(summary.map((x) => [x.leave_type, x.remaining]));
   const myActive = getMyLeaveRequests().filter((r) => r.status === 'requested');
   const myAbsenceOn = (iso) => myActive.find((r) => r.start_date <= iso && iso <= r.end_date);
+  // 내 근무가 있는 날은 교대하기 전까지 신청할 수 없다 (3.5-2)
+  const dutyDates = new Set(getMyDutyDates(win.start, win.end));
   // 보고 있는 달 중 신청할 수 있는 날짜의 남은 자리 (3-3)
   const monthFirst = isoOf(st.year, st.month, 1);
   const monthLast = isoOf(st.year, st.month, new Date(st.year, st.month + 1, 0).getDate());
@@ -603,7 +606,8 @@ function applyParts(redraw, user, summary) {
     // 외박은 토요일 출발 → 일요일 복귀만. 일요일도 신청 기간 안이고, 내 출타가 없고, 마감이 아니어야 한다.
     const sunday = nextDayOf(iso);
     const notSaturday =
-      st.kind === 'overnight' && (col !== 6 || sunday > win.end || Boolean(myAbsenceOn(sunday)) || Boolean(seats[sunday]?.full));
+      st.kind === 'overnight' &&
+      (col !== 6 || sunday > win.end || Boolean(myAbsenceOn(sunday)) || Boolean(seats[sunday]?.full) || dutyDates.has(sunday));
     const cell = button('apply-day', '', null, () => {
       if (notSaturday) return;
       if (st.kind === 'outing') {
@@ -639,6 +643,12 @@ function applyParts(redraw, user, summary) {
       cell.disabled = true;
       cell.classList.add('mine');
       label = `, 이미 신청한 ${ABSENCE_KIND_LABELS[mine.kind]}`;
+    } else if (dutyDates.has(iso)) {
+      // 내 근무가 있는 날: 회색 "근무", 누를 수 없음
+      cell.disabled = true;
+      cell.classList.add('full', 'duty');
+      cell.append(el('span', 'apply-seats', '근무'));
+      label = ', 근무 있음, 먼저 근무를 교대하세요';
     } else if (notSaturday && st.start && iso >= st.start && iso <= (st.end ?? st.start)) {
       // 고른 외박의 일요일(복귀일): 기간 표시만 하고 누르지는 않는다
       cell.disabled = true;
@@ -677,7 +687,7 @@ function applyParts(redraw, user, summary) {
         : st.kind === 'overnight'
           ? '외박할 토요일을 누르세요 (토요일 출발 → 일요일 복귀).'
           : '출발일을 누르세요.';
-    box.append(el('p', 'apply-guide', `${first} 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날입니다.`));
+    box.append(el('p', 'apply-guide', `${first} 신청할 수 있는 날짜: ${shortDay(win.start)} ~ ${shortDay(win.end)}. 날짜 아래 숫자는 남은 자리, 회색 "마감"은 정원이 찬 날, 회색 "근무"는 내 근무가 있는 날(먼저 교대)입니다.`));
     return [box];
   }
   if (!st.end) {

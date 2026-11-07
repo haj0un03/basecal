@@ -1629,6 +1629,15 @@ fieldset.field {
   font-size: 0.8rem;
 }
 
+/* 간부의 "바꾸기" 버튼은 줄 오른쪽 끝에 */
+.duty-slot > .small-button {
+  margin-left: auto;
+}
+
+.duty-slot-source + .small-button {
+  margin-left: 0;
+}
+
 /* 근무지 창: 순번 명단 고치기 */
 .roster-edit {
   margin: 4px 0 8px;

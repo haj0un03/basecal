@@ -967,6 +967,11 @@ function checkAbsenceDates(kind, start, end, now) {
   // 이미 신청한 내 출타(휴가·외박·외출)와 날짜가 겹치면 막는다 (가정, current_status.md 참고)
   const overlap = getMyLeaveRequests().find((r) => r.status === 'requested' && r.start_date <= end && r.end_date >= start);
   if (overlap) return `이미 신청한 출타(${overlap.start_date} ~ ${overlap.end_date})와 날짜가 겹칩니다.`;
+  // 근무가 있는 날에는 출타를 신청할 수 없다 (3.5-2). 먼저 교대해야 한다.
+  const duty = getMyDuties(start, end)[0];
+  if (duty) {
+    return `${Number(duty.date.slice(5, 7))}/${Number(duty.date.slice(8))} ${duty.post_name} ${duty.label} 근무가 있습니다. 먼저 근무를 교대하세요.`;
+  }
   // 기간 안에 정원이 찬 날이 하루라도 있으면 신청할 수 없다 (3-3). 휴가는 휴가·총 출타, 외박·외출은 총 출타 정원.
   const full = fullDatesIn(kind, start, end);
   if (full.length) {
@@ -1586,4 +1591,99 @@ export function deleteDutyPost(id, now = Date.now()) {
   post.is_active = false;
   writeAuditLog(officer, 'delete_duty_post', 'duty_posts', post.id, now);
   return { ok: true };
+}
+
+// ── 간부 손 수정 (Phase 3.5-2) ─────────────────────────────
+// 특정 날짜·시간대의 근무자를 바꾼다. 나머지 날은 순번대로다. 오늘부터 한 달 이내만.
+
+function overrideTarget(postId, iso, slot, now) {
+  const post = activePosts().find((p) => p.id === postId);
+  if (!post) return { error: 'not_found' };
+  const win = getApplyWindow(now);
+  if (!isDate(iso) || iso < win.start || iso > win.end) return { error: 'invalid', message: `오늘부터 한 달 이내(${win.start} ~ ${win.end})의 근무만 바꿀 수 있습니다.` };
+  const day = postDay(post, iso);
+  const current = day.find((x) => x.slot === slot);
+  if (!current) return { error: 'invalid', message: '이날은 이 근무지의 순번이 시작되기 전입니다.' };
+  return { post, current };
+}
+
+// 그날 다른 근무(어느 근무지든)가 있으면 그 근무 이름, 없으면 null
+function otherDutyOn(userId, iso, postId, slot) {
+  const other = dutiesOf(userId, iso, iso).find((d) => !(d.post_id === postId && d.slot === slot));
+  return other ? `${other.post_name} ${other.label}` : null;
+}
+
+// 간부만. 손 수정 창에 보여 줄 병사 목록. 결과: [{ id, name, position, current, blocked(못 고르는 이유 또는 null) }]
+export function getDutyCandidates(postId, iso, slot, now = Date.now()) {
+  if (!requireOfficer()) return [];
+  const target = overrideTarget(postId, iso, slot, now);
+  if (target.error) return [];
+  return getSoldiers().map((s) => {
+    let blocked = null;
+    if (isAway(s.id, iso)) blocked = '출타';
+    else {
+      const other = otherDutyOn(s.id, iso, postId, slot);
+      if (other) blocked = `${other} 근무`;
+    }
+    return { id: s.id, name: s.name, position: s.position, current: s.id === target.current.user_id, blocked };
+  });
+}
+
+// 간부만. input: { post_id, date, slot, user_id }
+// 결과: { ok: true } 또는 { ok: false, reason: 'forbidden' | 'not_found' | 'invalid', errors }
+export function setDutyOverride(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const slot = Number(input.slot);
+  const target = overrideTarget(input.post_id, input.date, slot, now);
+  if (target.error === 'not_found') return { ok: false, reason: 'not_found' };
+  if (target.error) return { ok: false, reason: 'invalid', errors: { user_id: target.message } };
+  const userId = input.user_id;
+  const soldier = mockDb.profiles.find((p) => p.id === userId && p.is_active && p.role === 'soldier');
+  let message = null;
+  if (!soldier) message = '근무를 설 병사를 고르세요.';
+  else if (userId === target.current.user_id) message = '지금 근무자와 같은 사람입니다.';
+  else if (isAway(userId, input.date)) message = `${soldier.name}은(는) 이날 출타 중입니다.`;
+  else {
+    const other = otherDutyOn(userId, input.date, input.post_id, slot);
+    if (other) message = `${soldier.name}은(는) 이날 이미 ${other} 근무가 있습니다.`;
+  }
+  if (message) return { ok: false, reason: 'invalid', errors: { user_id: message } };
+
+  mockDb.duty_overrides = mockDb.duty_overrides.filter(
+    (o) => !(o.post_id === input.post_id && o.date === input.date && o.slot === slot),
+  );
+  mockDb.duty_overrides.push({
+    post_id: input.post_id,
+    date: input.date,
+    slot,
+    user_id: userId,
+    source: 'manual',
+    changed_by: officer.id,
+    changed_at: new Date(now).toISOString(),
+  });
+  writeAuditLog(officer, 'set_duty_override', 'duty_overrides', `${input.post_id}:${input.date}:${slot}`, now);
+  return { ok: true };
+}
+
+// 간부만. 손 수정·교대로 바뀐 근무를 순번대로 되돌린다.
+export function clearDutyOverride(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const slot = Number(input.slot);
+  const target = overrideTarget(input.post_id, input.date, slot, now);
+  if (target.error === 'not_found') return { ok: false, reason: 'not_found' };
+  if (target.error) return { ok: false, reason: 'invalid', errors: { user_id: target.message } };
+  const before = mockDb.duty_overrides.length;
+  mockDb.duty_overrides = mockDb.duty_overrides.filter(
+    (o) => !(o.post_id === input.post_id && o.date === input.date && o.slot === slot),
+  );
+  if (mockDb.duty_overrides.length === before) return { ok: false, reason: 'not_found' };
+  writeAuditLog(officer, 'clear_duty_override', 'duty_overrides', `${input.post_id}:${input.date}:${slot}`, now);
+  return { ok: true };
+}
+
+// 그날 내 근무가 있는 날짜 (출타 신청 달력에서 "근무"로 막기 위해)
+export function getMyDutyDates(start, end) {
+  return [...new Set(getMyDuties(start, end).map((d) => d.date))];
 }
