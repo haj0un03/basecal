@@ -114,6 +114,15 @@ async function loadState() {
     remoteSoldierNames = state.soldier_names ?? [];
     remoteSoldierNames.forEach((x) => remoteNames.set(x.id, x.name));
   }
+  // 5-4: 시설 예약 (06_facility.sql 실행 전에는 가상 데이터). 병사는 다른 사람의 대기 신청을 이름 없이 받는다
+  if (state.facilities) {
+    replace('facilities', state.facilities);
+    replace('reservations', state.reservations);
+    replace('facility_blocks', state.facility_blocks);
+    state.reservations.forEach((r) => {
+      if (r.user_id && r.user_name) remoteNames.set(r.user_id, r.user_name);
+    });
+  }
   if (state.leave_grants) replace('leave_grants', state.leave_grants);
   if (state.merit_points) replace('merit_points', state.merit_points);
   remoteSoldierCount = state.active_soldiers;
@@ -2107,7 +2116,7 @@ export function getMySwapChoices(theirDuty, now = Date.now()) {
 // - 간부가 승인하면 확정, 반려하면 사유를 남긴다. 반려·취소되면 그 시간대는 다시 열린다.
 // - 간부가 막아 둔 시간(facility_blocks)은 "사용 불가"
 // - 내가 출타 중인 날은 예약할 수 없다. 근무가 있는 날은 안내만 한다.
-// - 아직 가상 데이터만 (Supabase로는 5-4에서 옮긴다).
+// - 서버 모드(5-4)에서는 신청·취소·승인·반려·막기를 서버 함수가 처리한다.
 
 const MAX_RESERVATION_REASON_LENGTH = 100;
 const MAX_BLOCK_REASON_LENGTH = 50;
@@ -2200,7 +2209,7 @@ function slotsOf(f, date, user, now) {
     } else if (reservation) {
       slot.state = reservation.user_id === user.id ? 'mine' : reservation.status;
       slot.reservation_id = reservation.id;
-      slot.user_name = nameOf(reservation.user_id);
+      slot.user_name = reservation.user_id ? nameOf(reservation.user_id) : null;
       slot.status = reservation.status;
     } else if (date < today || (date === today && m < nowMinutes(now))) {
       slot.state = 'past';
@@ -2231,7 +2240,7 @@ function reservationView(r) {
   return {
     ...r,
     facility_label: facilityLabel(r.facility_id),
-    user_name: nameOf(r.user_id),
+    user_name: r.user_id ? nameOf(r.user_id) : null,
     decided_by_name: r.decided_by ? nameOf(r.decided_by) : null,
     hours: (toMinutes(r.end_time) - toMinutes(r.start_time)) / 60,
   };
@@ -2306,6 +2315,10 @@ export function requestReservation(input, now = Date.now()) {
   if (activeReservationsOn(f.id, date).some((r) => overlaps(toMinutes(r.start_time), toMinutes(r.end_time), start, end))) {
     return fail('이미 신청된 시간이 있습니다. 다른 시간을 고르세요.');
   }
+  // 서버 모드: 겹침 확인과 저장을 서버가 한 번에 한다 (같은 시간을 동시에 눌러도 먼저 온 한 명만)
+  if (REMOTE) {
+    return remoteWrite('request_reservation', { p_token: token, p_facility_id: f.id, p_date: date, p_start_time: toTime(start), p_hours: hours });
+  }
   const row = {
     id: nextId('v', mockDb.reservations),
     facility_id: f.id,
@@ -2331,6 +2344,7 @@ export function cancelReservation(id, now = Date.now()) {
   if (!r) return { ok: false, reason: 'not_found' };
   if (r.user_id !== user.id) return { ok: false, reason: 'forbidden' };
   if (!ACTIVE_RESERVATION.includes(r.status)) return { ok: false, reason: 'already_decided' };
+  if (REMOTE) return remoteWrite('cancel_reservation', { p_token: token, p_id: id });
   r.status = 'cancelled';
   r.cancelled_at = new Date(now).toISOString();
   return { ok: true };
@@ -2353,6 +2367,7 @@ export function decideReservation(id, decision, reason = '', now = Date.now()) {
   const r = mockDb.reservations.find((x) => x.id === id);
   if (!r) return { ok: false, reason: 'not_found' };
   if (r.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  if (REMOTE) return remoteWrite('decide_reservation', { p_token: token, p_id: id, p_decision: decision, p_reason: reason ?? '' });
   if (decision === 'reject') {
     const text = String(reason ?? '').trim();
     if (!text) return { ok: false, reason: 'invalid', errors: { reject_reason: '반려 사유를 입력하세요.' } };
@@ -2418,6 +2433,17 @@ export function addFacilityBlock(input, now = Date.now()) {
   if (!reason) errors.reason = '사유를 입력하세요.';
   else if (reason.length > MAX_BLOCK_REASON_LENGTH) errors.reason = `사유는 ${MAX_BLOCK_REASON_LENGTH}자 이하로 입력하세요.`;
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    return remoteWrite('add_facility_block', {
+      p_token: token,
+      p_facility_id: allFacilities ? 'all' : f.id,
+      p_date: input.date,
+      p_all_day: allDay,
+      p_start_time: start,
+      p_end_time: end,
+      p_reason: reason,
+    });
+  }
 
   const targets = allFacilities ? mockDb.facilities : [f];
   const clash = mockDb.reservations.filter(
@@ -2452,6 +2478,7 @@ export function deleteFacilityBlock(id, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
   const index = mockDb.facility_blocks.findIndex((b) => b.id === id);
   if (index < 0) return { ok: false, reason: 'not_found' };
+  if (REMOTE) return remoteWrite('delete_facility_block', { p_token: token, p_id: id });
   mockDb.facility_blocks.splice(index, 1);
   writeAuditLog(officer, 'delete_facility_block', 'facility_blocks', id, now);
   return { ok: true };

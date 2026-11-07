@@ -6,6 +6,8 @@
 # 점검은 앱을 임시 폴더에 복사해서 가상 데이터 모드로 돌린다 (js/config.js는 빼므로 서버에 쓰지 않는다).
 # - tests/*.html     : 가상 근무지를 비운 복사본에서 (근무가 달력·출타 점검에 끼어들지 않게)
 # - tests/full/*.html: 가상 데이터 그대로인 복사본에서 (근무·시설 점검)
+# - tests/remote/*.html: 서버 모드 흉내. 가짜 js/config.js를 넣은 복사본에서, tests/remote/fake-server.js가
+#   Supabase 대신 답한다 (병사가 받는 데이터를 서버와 같은 규칙으로 걸러 준다)
 # 결과: 점검마다 "통과 N / 실패 M"과 실패한 항목. 하나라도 실패하면 끝에 실패로 알려 준다.
 import functools
 import html
@@ -39,8 +41,8 @@ def find_browser():
 
 
 def prepare(site):
-    """앱을 site(근무지 비움)와 site/full(그대로)에 복사하고 점검 페이지를 넣는다."""
-    for target in (site, os.path.join(site, 'full')):
+    """앱을 site(근무지 비움), site/full(그대로), site/remote(서버 모드 흉내)에 복사하고 점검 페이지를 넣는다."""
+    for target in (site, os.path.join(site, 'full'), os.path.join(site, 'remote')):
         os.makedirs(target, exist_ok=True)
         shutil.copy(os.path.join(root, 'index.html'), target)
         for folder in ('css', 'js'):
@@ -54,16 +56,27 @@ def prepare(site):
     if emptied == text:
         sys.exit('js/mock-data.js에서 duty_posts를 찾지 못했습니다.')
     open(mock, 'w', encoding='utf-8').write(emptied)
-    for sub in ('', 'full'):
+    for sub in ('', 'full', 'remote'):
         src = os.path.join(tests_dir, sub)
         for name in os.listdir(src):
             if name.startswith('t_') and name.endswith('.html'):
                 shutil.copy(os.path.join(src, name), os.path.join(site, sub, name))
+    # 서버 모드 흉내: 가짜 서버 주소의 config.js, 앱보다 먼저 가짜 서버를 불러온다
+    remote = os.path.join(site, 'remote')
+    with open(os.path.join(remote, 'js', 'config.js'), 'w', encoding='utf-8') as f:
+        f.write('export default { "SUPABASE_URL": "https://fake.basecal.test", "SUPABASE_ANON_KEY": "sb_publishable_fake" };\n')
+    shutil.copy(os.path.join(tests_dir, 'remote', 'fake-server.js'), remote)
+    index = os.path.join(remote, 'index.html')
+    page = open(index, encoding='utf-8').read()
+    tag = '<script type="module" src="js/app.js"></script>'
+    if tag not in page:
+        sys.exit('index.html에서 앱 스크립트 줄을 찾지 못했습니다.')
+    open(index, 'w', encoding='utf-8').write(page.replace(tag, '<script src="fake-server.js"></script>\n  ' + tag))
 
 
 def all_tests():
     names = []
-    for sub in ('', 'full'):
+    for sub in ('', 'full', 'remote'):
         src = os.path.join(tests_dir, sub)
         names += sorted((sub + '/' if sub else '') + n[:-5] for n in os.listdir(src) if n.startswith('t_') and n.endswith('.html'))
     return names

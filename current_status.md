@@ -15,7 +15,7 @@
 | Phase 3 | 핵심 2: 휴가·외박·외출 | 완료 (완료 기준 확인함) |
 | Phase 3.5 | 추가: 근무 순번 편성 | 완료 (완료 기준 확인함, 2026-11-07) |
 | Phase 4 | 핵심 3: 시설 예약 | 완료 (완료 기준 확인함, 2026-11-07) |
-| Phase 5 | 저장 연결 (Supabase) | 진행 중. 5-1(들어오기·인원), 5-2(일정) 완료. 5-3a(휴가 일수·상점) 완료. 5-3b(출타율·출타 신청) 완료. 5-3c(근무) 완료. 다음은 5-4(시설 예약) |
+| Phase 5 | 저장 연결 (Supabase) | 진행 중. 5-1(들어오기·인원), 5-2(일정) 완료. 5-3a(휴가 일수·상점) 완료. 5-3b(출타율·출타 신청) 완료. 5-3c(근무) 완료. 5-4(시설 예약) 코드 완료, 사용자가 `supabase/06_facility.sql` 실행·확인 대기 |
 
 **지금 앱으로 할 수 있는 것**
 - 달력: 개인 일정(기타)과 부대 일정 보기·관리, 내 근무가 "근무"로 자동 표시, 필터(부대·출타·기타)
@@ -35,7 +35,7 @@
 **저장 방식 (두 가지 모드)**
 - **서버 모드:** `js/config.js`가 있으면 Supabase에 저장한다. 이 PC에는 만들어 두었다(`python tools/make_config.py`가 `.env`에서 만든다. 둘 다 저장소에 안 올라감).
   - 지금 서버에 저장되는 것: 인원·개인 코드·들어오기·변경 기록(5-1), 달력 일정(개인·부대, 5-2), 받은 휴가 일수·상점(5-3a), 출타율·휴가·외박·외출 신청(5-3b), 근무(5-3c)
-  - 아직 이 기기의 가상 데이터인 것: 시설 예약 → **새로고침하면 처음으로 돌아간다**
+  - 아직 이 기기의 가상 데이터인 것: 시설 예약 (06 SQL 실행 뒤 서버) → **새로고침하면 처음으로 돌아간다**
   - 서버 모드에서는 들어오기 화면에 연습용 코드 목록이 안 보인다
 - **가상 데이터 모드:** `js/config.js`를 지우면 예전처럼 코드 안의 가상 데이터로만 동작한다. 자동 점검은 이 모드로 돈다.
 - Vercel 배포 주소에는 `js/config.js`가 없어서 가상 데이터 모드로 뜬다 (Vercel에서 만드는 방법은 나중에 정한다).
@@ -102,12 +102,21 @@
 - GitHub: 저장소 `haj0un03/basecal`(비공개). **커밋은 Claude가 단계마다 하고, 올리기(Push)는 사용자가 GitHub Desktop으로 직접** 한다. GitHub Desktop에서 커밋할 때는 바뀐 파일 목록을 한 번 보고 누른다 (예전 내용으로 돌아간 이 문서가 그대로 커밋·푸시된 일이 있었다). 예전 커밋 2개에 문서 실명이 남아 있으므로 **저장소를 공개로 바꾸지 않는다.**
 - 배포: Vercel로 하기로 함. 작업 문서(*.md)와 `.env`는 `.vercelignore`로 배포에서 뺐다. 연결과 휴대폰 확인은 아직이다.
 - 개발 도구는 확정하지 않았지만 순수 HTML+JS(설치 없음)로 만들고 있다.
-- 자동 점검: 프로젝트 안 `tests/`에 있다(929개, 11/7 모두 통과). 프로젝트 폴더에서 `python tools/run_tests.py`로 모두 돌린다(고른 것만: `python tools/run_tests.py t_leave full/t_swap`). 앱을 임시 폴더에 가상 데이터 모드로 복사해 화면 없는 Edge로 돈다. `tests/*.html`은 가상 근무지를 비운 복사본, `tests/full/*.html`은 그대로인 복사본. 서버 점검(예전 40개)은 아직 프로젝트에 없다
+- 자동 점검: 프로젝트 안 `tests/`에 있다(950개, 11/7 모두 통과. `tests/remote/`는 서버 모드 흉내). 프로젝트 폴더에서 `python tools/run_tests.py`로 모두 돌린다(고른 것만: `python tools/run_tests.py t_leave full/t_swap`). 앱을 임시 폴더에 가상 데이터 모드로 복사해 화면 없는 Edge로 돈다. `tests/*.html`은 가상 근무지를 비운 복사본, `tests/full/*.html`은 그대로인 복사본. 서버 점검(예전 40개)은 아직 프로젝트에 없다
 - 예전에 새로 만든 파일이 원인 모르게 사라진 적이 있다(OneDrive 동기화나 보안 프로그램으로 추정). 단계마다 커밋해 두었으니 사라지면 git으로 되살린다.
 
 ## 오늘 한 것
 
 2026-11-07.
+
+- **Phase 5-4 시설 예약을 서버로 (코드 완료, 서버 실행·확인 대기)**
+  - `supabase/06_facility.sql`: facilities(7곳), reservations, facility_blocks 표(가상 예약·막기 그대로). 서버 함수 request_reservation, cancel_reservation, decide_reservation, add_facility_block, delete_facility_block
+  - 예약 신청은 잠금을 잡고 기간·지난 시간·1~2시간·운영 시간·출타·하루 1건·막기·겹침을 확인한 뒤 저장 → 같은 시간을 동시에 눌러도 먼저 온 한 명만
+  - 병사는 다른 사람의 대기 신청을 이름·번호 없이 받는다("신청 중"). 승인된 예약은 이름과 함께(PRD)
+  - ★ 예약 기준 값(2주·2시간·하루 1건)은 SQL `private.reservation_limit`에도 적었다. `js/settings.js`를 바꾸면 이것도 바꾼다
+  - load_state를 `private.load_state_base`(5-3c까지 내용) + 이 파일의 시설 부분으로 나눔. 다음 파일부터는 base에 더하는 방식
+- **서버 모드 흉내 점검 (사용자 요청):** `tests/remote/fake-server.js`가 Supabase 대신 답한다. 앱은 진짜 서버 모드(가짜 `config.js`)로 돌고, 가짜 서버가 SQL과 같은 규칙으로 병사 데이터를 걸러 준다(일은 가상 데이터 모드 앱 코드가 함). `tests/remote/t_remote.html` 21개: 병사가 남의 인원·출타·명단을 받지 않음, 날짜만으로 마감 계산, 교대 상대 목록·근무표 "교대" 버튼, 교대 요청 → 간부 승인 → 병사 근무 사라짐, 시설 남의 대기 "신청 중"·승인 "예약 · 이름", 휴가 신청. 예전 교대 상대 버그를 되돌려 보니 이 점검이 잡는 것을 확인함
+  - 확인: `python tools/run_tests.py` 950개 모두 통과
 
 - **Phase 5-3c 근무를 서버로 → 완료 (사용자가 05 SQL 실행 후 브라우저에서 확인: 근무 달력, 간부 손 수정이 새로고침 뒤에도 남음, 병사 교대 요청 → 간부 승인 → 근무가 바뀌고 유지)**
   - 확인 중 고친 것: 서버 모드 병사 화면에서 교대 상대가 모두 걸러지던 문제(교대 확인이 병사가 받지 않는 profiles에서 상대를 찾았음 → 서버가 준 병사 이름 목록에서 찾게 함)
@@ -246,7 +255,7 @@
 ## 다음에 할 것
 
 1. **Phase 5 이어서**
-   - 5-4: 시설 예약을 서버로 (먼저 도착한 신청만 받기, 시설 막기 포함)
+   - 5-4: 시설 예약을 서버로 — 코드 완료, `supabase/06_facility.sql` 실행·확인 대기
    - 완료 기준 확인: 휴대폰 두 대에서 같은 데이터가 보이고, 동시에 신청해도 정원을 넘지 않는다
    - Vercel에서도 서버 모드로 뜨게 하는 방법 정하기 (지금 Vercel은 가상 데이터 모드)
    - Claude의 서버 자동 점검(병사가 남의 개인 일정·신청을 못 받는지 등)은 인터넷이 되는 환경에서 다시 돌리기
@@ -271,7 +280,7 @@
   - 서버에서 받은 데이터를 mockDb의 같은 표 자리에 채워 쓰므로 읽기 함수는 그대로 바로 값을 돌려준다
   - 쓰기 함수는 서버 모드에서 Promise를 돌려준다. 화면은 `await`로 받는다. 가상 데이터 모드에서는 값을 바로 돌려줘서 예전 점검이 그대로 돈다
   - 서버로 보내기 전에도 화면 쪽 입력 확인을 그대로 하고, 서버가 한 번 더 확인한다
-- **서버와 settings.js 값 맞추기:** `supabase/03_leave_merit.sql`의 `private.merit_cost`·`private.max_points_per_entry`, `supabase/04_absence.sql`의 `private.absence_limit`은 `js/settings.js`의 MERIT_COSTS·MAX_POINTS_PER_ENTRY·외박/외출 횟수와 같아야 한다.
+- **서버와 settings.js 값 맞추기:** `supabase/03_leave_merit.sql`의 `private.merit_cost`·`private.max_points_per_entry`, `supabase/04_absence.sql`의 `private.absence_limit`, `supabase/06_facility.sql`의 `private.reservation_limit`은 `js/settings.js`의 MERIT_COSTS·MAX_POINTS_PER_ENTRY·외박/외출 횟수와 같아야 한다.
 - **Supabase 보안** (`supabase/*.sql`):
   - 표마다 RLS를 켜고 anon·authenticated 권한을 회수한다. 앱이 부르는 함수만 `grant execute` 한다
   - 함수는 `security definer`와 `set search_path = ''`로 만들고, 첫 줄에서 `private.session_profile(p_token)`으로 사람을 확인한다

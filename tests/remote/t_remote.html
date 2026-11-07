@@ -1,0 +1,111 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2400px;border:0"></iframe>
+<script type="module">
+// 서버 모드 흉내 점검 (2026-11-07): 앱은 서버 모드로 돌고, fake-server.js가 Supabase처럼 걸러진 데이터를 준다.
+// 병사 화면이 "받지 않는 데이터"에 기대지 않는지 본다 (예: 교대 상대가 모두 걸러지던 문제).
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+try {
+  const f = document.getElementById('f');
+  const $ = (q) => f.contentDocument.querySelector(q);
+  const $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  const w = () => f.contentWindow;
+  const go = async (hash) => { w().location.hash = hash; await wait(150); };
+  // 들어온 채로 연다 (접속 토큰 = 사람 번호, 가짜 서버 규칙)
+  const open = (token, hash) => new Promise((res) => {
+    localStorage.clear();
+    if (token) localStorage.setItem('basecal.token', JSON.stringify(token));
+    f.onload = () => setTimeout(res, 600);
+    f.src = `index.html?x=${Math.random()}${hash}`;
+  });
+  const appModule = (path) => w().Function(`return import("${path}")`)();
+  // 같은 창에서 나갔다가 다른 사람으로 들어온다 (가짜 서버의 데이터가 이어진다)
+  const switchTo = async (name, code) => {
+    $('#user-button').click(); await wait(50);
+    [...f.contentDocument.querySelectorAll('#user-menu button')].find((b) => b.textContent.includes('로그아웃')).click(); await wait(300);
+    const form = $('.login-form');
+    form.elements.name.value = name;
+    form.elements.code.value = code;
+    form.requestSubmit(); await wait(600);
+  };
+
+  // ── 병사 ──
+  await open('u01', '#apply/leave');
+  const app = await appModule('./js/data.js');
+  const { mockDb } = await appModule('./js/mock-data.js');
+  check('★ 서버 모드로 돈다 (가짜 서버 호출)', w().__fakeCalls.includes('load_state'), w().__fakeCalls.join());
+  check('★ 병사는 다른 병사의 인원 정보를 받지 않음 (본인 + 간부만)', mockDb.profiles.every((p) => p.id === 'u01' || p.role === 'officer'), mockDb.profiles.map((p) => p.id).join());
+  check('병사는 다른 병사의 출타 신청을 받지 않음', mockDb.leave_requests.every((r) => r.user_id === 'u01'));
+  check('병사는 순번 명단을 받지 않음', mockDb.duty_rosters.length === 0);
+  const win = app.getApplyWindow();
+  if ('2026-11-12' >= win.start && '2026-11-12' <= win.end) {
+    const av = app.getDayAvailability('leave', '2026-11-12', '2026-11-12')[0];
+    check('★ 다른 병사 출타는 날짜만으로 세어 11/12 휴가 마감', av.full === true, JSON.stringify(av));
+  }
+
+  // 근무 교대: 교대 상대 목록이 나와야 한다 (11/7에 모두 걸러지던 문제)
+  await go('#apply/duty');
+  check('근무 교대 탭: 내 근무 달력', $$('.duty-cal-day.has-duty').length > 0);
+  const day = $$('.duty-cal-day.has-duty:not(:disabled)')[0];
+  day.click(); await wait(80);
+  $('.duty-cal-line [data-swap-for]').click(); await wait(80);
+  const options = [...$('#duty-dialog select[name="partner_id"]').options].filter((o) => o.value);
+  check('★ 교대 요청 창: 교대할 병사 목록이 나온다', options.length > 0, options.length);
+  check('목록 이름은 서버가 준 이름', options.every((o) => o.textContent && !o.textContent.includes('알 수 없음')));
+  $('#duty-dialog [data-action="close"]').click(); await wait(50);
+  let boardSwap = false;
+  for (let i = 0; i < 6 && !boardSwap; i++) {
+    $('[data-action="duty-next"]').click(); await wait(60);
+    boardSwap = !!$('[data-swap-with]');
+  }
+  check('★ 근무표에 다른 병사 근무 옆 "교대" 버튼', boardSwap);
+  check('근무표 이름이 보인다 (병사는 profiles가 없어도)', $$('.duty-slot-name').every((x) => x.textContent && !x.textContent.includes('알 수 없음')));
+  // 대신 서기 요청
+  const myDay = $$('.duty-cal-day.has-duty:not(:disabled)')[0];
+  const myDate = myDay.dataset.date;
+  myDay.click(); await wait(80);
+  $('.duty-cal-line [data-swap-for]').click(); await wait(80);
+  const sel = $('#duty-dialog select[name="partner_id"]');
+  sel.value = [...sel.options].find((o) => o.value).value;
+  sel.dispatchEvent(new Event('change', { bubbles: true })); await wait(30);
+  $('#duty-dialog select[name="partner_duty"]').value = 'cover';
+  $('#duty-dialog input[name="reason"]').value = '면회';
+  $('#duty-dialog form').requestSubmit(); await wait(400);
+  check('★ 교대 요청이 서버로 가고 "승인 대기"', w().__fakeCalls.includes('request_duty_swap') && $('.swap-item .status-badge')?.textContent === '승인 대기', $('#duty-dialog form .form-error')?.textContent ?? '');
+
+  // 시설: 남의 대기 신청은 이름 없이 "신청 중", 승인된 예약은 이름과 함께
+  if ('2026-11-10' >= app.getReservationWindow().start) {
+    await go('#apply/facility');
+    $('.fac-cal-day[data-date="2026-11-10"]').click(); await wait(80);
+    $('.fac-cell[data-facility="f01"]').click(); await wait(80);
+    check('★ 남의 대기 신청: "신청 중" (이름 없음)', $('.fac-slot[data-start="14:00"]').textContent.includes('신청 중'));
+    check('★ 승인된 예약: "예약 · 박가온"', $('.fac-slot[data-start="10:00"]').textContent.includes('예약 · 박가온'));
+    check('병사는 남의 대기 신청자를 받지 않음', mockDb.reservations.filter((r) => r.status === 'pending' && r.user_id !== 'u01').every((r) => r.user_id === null));
+  }
+  // 휴가 신청: 서버로 가고 "자리 확보"
+  await go('#apply/leave');
+  const free = (() => { for (let x = addDays(win.start, 1); x <= win.end; x = addDays(x, 1)) { if (!app.getMyDutyDates(x, x).length && !app.getDayAvailability('leave', x, x)[0].full) return x; } })();
+  const before = w().__fakeCalls.filter((c) => c === 'apply_leave').length;
+  const r = await app.applyLeave({ start_date: free, end_date: free, items: { annual: 1 } });
+  check('★ 휴가 신청이 서버로 가고 내역에 남음', r.ok && w().__fakeCalls.filter((c) => c === 'apply_leave').length === before + 1 && app.getMyLeaveRequests().some((x) => x.start_date === free && x.status === 'requested'), JSON.stringify(r));
+
+  // ── 간부: 교대 승인 ──
+  await switchTo('백지훈', 'YCM2Y5');
+  check('간부로 다시 들어옴 (같은 창)', app.getCurrentUser()?.id === 'o01');
+  check('간부는 모든 인원을 받음', mockDb.profiles.length > 5);
+  await go('#apply/duty');
+  const pending = $('.swap-pending .swap-item');
+  check('★ 간부: 병사의 교대 요청이 보임', !!pending && pending.textContent.includes('김하늘'));
+  pending.querySelector('.approve').click(); await wait(400);
+  check('★ 간부 승인이 서버로 감', w().__fakeCalls.includes('decide_duty_swap') && !$('.swap-pending'));
+
+  // ── 다시 병사: 근무가 빠졌는지 ──
+  await switchTo('김하늘', 'CZUTP6');
+  await go('#apply/duty');
+  check('★ 승인 뒤 병사의 그날 근무가 사라짐', !app.getMyDuties(myDate, myDate).length, myDate);
+  check('360px 가로 넘침 없음', f.contentDocument.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>
