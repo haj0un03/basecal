@@ -15,7 +15,7 @@
 | Phase 3 | 핵심 2: 휴가·외박·외출 | 완료 (완료 기준 확인함) |
 | Phase 3.5 | 추가: 근무 순번 편성 | 완료 (완료 기준 확인함, 2026-11-07) |
 | Phase 4 | 핵심 3: 시설 예약 | 완료 (완료 기준 확인함, 2026-11-07) |
-| Phase 5 | 저장 연결 (Supabase) | 진행 중. 5-1(들어오기·인원), 5-2(일정) 완료. 다음은 5-3(휴가·상점·출타율·근무) |
+| Phase 5 | 저장 연결 (Supabase) | 진행 중. 5-1(들어오기·인원), 5-2(일정) 완료. 5-3a(휴가 일수·상점) 코드 완료, 사용자가 `supabase/03_leave_merit.sql` 실행·확인 대기. 그다음 5-3b(출타율·출타 신청), 5-3c(근무) |
 
 **지금 앱으로 할 수 있는 것**
 - 달력: 개인 일정(기타)과 부대 일정 보기·관리, 내 근무가 "근무"로 자동 표시, 필터(부대·출타·기타)
@@ -109,6 +109,13 @@
 ## 오늘 한 것
 
 2026-11-07.
+
+- **Phase 5-3a 휴가 일수·상점을 서버로 (코드 완료, 서버 실행·확인 대기)**
+  - 5-3을 세 부분으로 나눔: 5-3a 휴가 일수·상점 → 5-3b 출타율·휴가·외박·외출 신청(정원 확인과 저장을 서버 함수 하나에서) → 5-3c 근무
+  - `supabase/03_leave_merit.sql`: leave_grants, merit_points 표(가상 데이터 그대로), 서버 함수 request_leave_grant, request_merit_conversion, decide_leave_grant, give_points. load_state가 휴가 일수·상점도 준다(병사는 자기 것만, 간부는 전체). 상점을 바꾸는 함수는 병사 단위로 잠그고 확인해서 동시에 두 번 쓰지 못함. 승인·반려·상점 주기는 변경 기록
+  - ★ 상점 전환 점수(100/50)와 한 번 최대 점수(50)는 서버도 알아야 해서 SQL의 `private.merit_cost`, `private.max_points_per_entry`에도 적었다. `js/settings.js`의 값을 바꾸면 이 SQL도 같이 바꿔 다시 실행해야 한다
+  - 앱: 서버 모드에서 네 기능이 서버 함수를 부르고, 휴가 화면이 결과를 기다린다(연결 실패 안내 포함). 03 SQL을 실행하기 전에는 가상 데이터를 그대로 쓴다
+  - 확인: 가상 데이터 모드 점검(휴가·상점·역할·들어오기·출타) 재통과. 서버는 Claude 환경에서 연결이 안 돼 사용자가 브라우저에서 확인한다
 
 - **Supabase: 01·02 SQL 실행 (사용자)**
   - 잠들었던(Paused) 프로젝트를 깨운 뒤 `02_events.sql`을 실행하니 `relation "public.profiles" does not exist` 오류 → 표가 없어진 상태였음(원인 모름). 사용자가 `01_members.sql`을 다시 실행한 뒤 `02_events.sql` 실행 성공
@@ -231,6 +238,7 @@
   - 서버에서 받은 데이터를 mockDb의 같은 표 자리에 채워 쓰므로 읽기 함수는 그대로 바로 값을 돌려준다
   - 쓰기 함수는 서버 모드에서 Promise를 돌려준다. 화면은 `await`로 받는다. 가상 데이터 모드에서는 값을 바로 돌려줘서 예전 점검이 그대로 돈다
   - 서버로 보내기 전에도 화면 쪽 입력 확인을 그대로 하고, 서버가 한 번 더 확인한다
+- **서버와 settings.js 값 맞추기:** `supabase/03_leave_merit.sql`의 `private.merit_cost`·`private.max_points_per_entry`는 `js/settings.js`의 MERIT_COSTS·MAX_POINTS_PER_ENTRY와 같아야 한다.
 - **Supabase 보안** (`supabase/*.sql`):
   - 표마다 RLS를 켜고 anon·authenticated 권한을 회수한다. 앱이 부르는 함수만 `grant execute` 한다
   - 함수는 `security definer`와 `set search_path = ''`로 만들고, 첫 줄에서 `private.session_profile(p_token)`으로 사람을 확인한다

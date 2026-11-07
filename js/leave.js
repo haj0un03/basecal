@@ -28,6 +28,7 @@ import {
   setDefaultRates,
   addRatePeriod,
   deleteRatePeriod,
+  NETWORK_ERROR,
 } from './data.js';
 import { MAX_POINTS_PER_ENTRY } from './settings.js';
 
@@ -234,18 +235,20 @@ function officerParts(redraw, user) {
       error.hidden = true;
       const actions = el('span', 'grant-actions');
       actions.append(
-        button('small-button approve', '승인', null, () => {
-          const result = decideLeaveGrant(g.id, 'approve');
+        button('small-button approve', '승인', null, async () => {
+          const result = await decideLeaveGrant(g.id, 'approve');
           if (!result.ok && result.reason === 'not_enough_merit') {
             error.textContent = `상점이 모자라 승인할 수 없습니다. 지금 상점 ${result.balance}점, 필요 ${g.merit_cost}점.`;
             error.hidden = false;
             return;
           }
+          if (result.reason === 'network') window.alert(NETWORK_ERROR);
           redraw('.leave-sub-head h3');
         }),
-        button('small-button danger', '반려', null, () => {
+        button('small-button danger', '반려', null, async () => {
           if (!window.confirm(`${g.name}의 ${GRANT_LABELS[g.leave_type]} ${g.days}${unitOf(g.leave_type)} 요청을 반려할까요?`)) return;
-          decideLeaveGrant(g.id, 'reject');
+          const result = await decideLeaveGrant(g.id, 'reject');
+          if (result.reason === 'network') window.alert(NETWORK_ERROR);
           redraw('.leave-sub-head h3');
         }),
       );
@@ -284,12 +287,15 @@ function openForm(html, submit, onDone, focusName) {
   leaveDialog.innerHTML = html;
   const form = leaveDialog.querySelector('form');
   const f = form.elements;
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     form.querySelectorAll('.field-error, .form-error').forEach((node) => {
       node.hidden = true;
     });
-    const result = submit(f);
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    const result = await submit(f);
+    submitButton.disabled = false;
     if (result.ok) {
       leaveDialog.close();
       onDone();
@@ -305,7 +311,7 @@ function openForm(html, submit, onDone, focusName) {
       return;
     }
     const error = form.querySelector('.form-error');
-    error.textContent = '권한이 없습니다. 다시 들어와 주세요.';
+    error.textContent = result.reason === 'network' ? NETWORK_ERROR : '권한이 없습니다. 다시 들어와 주세요.';
     error.hidden = false;
   });
   form.querySelector('[data-action="close"]').addEventListener('click', () => leaveDialog.close());

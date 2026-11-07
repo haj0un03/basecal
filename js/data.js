@@ -78,6 +78,9 @@ async function loadState() {
     const localAbsence = mockDb.events.filter((e) => ['leave', 'overnight', 'outing'].includes(e.type));
     mockDb.events.splice(0, mockDb.events.length, ...localAbsence, ...state.events);
   }
+  // 5-3a: 휴가 일수·상점 (서버에 03_leave_merit.sql을 아직 실행하지 않았으면 없다 → 가상 데이터를 그대로 쓴다)
+  if (state.leave_grants) mockDb.leave_grants.splice(0, mockDb.leave_grants.length, ...state.leave_grants);
+  if (state.merit_points) mockDb.merit_points.splice(0, mockDb.merit_points.length, ...state.merit_points);
   remoteSoldierCount = state.active_soldiers;
   sessionUserId = state.me.id;
   return true;
@@ -725,6 +728,9 @@ export function requestLeaveGrant(input, now = Date.now()) {
     errors.reason = `사유는 ${MAX_REASON_LENGTH}자 이하로 입력하세요.`;
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    return remoteWrite('request_leave_grant', { p_token: token, p_leave_type: input.leave_type, p_days: days, p_reason: reason });
+  }
 
   const grant = {
     id: nextId('g', mockDb.leave_grants),
@@ -763,6 +769,8 @@ export function decideLeaveGrant(id, decision, now = Date.now()) {
   const grant = mockDb.leave_grants.find((g) => g.id === id);
   if (!grant) return { ok: false, reason: 'not_found' };
   if (grant.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  // 서버 모드: 상점 확인과 전환을 서버가 한 번에 한다
+  if (REMOTE) return remoteWrite('decide_leave_grant', { p_token: token, p_id: id, p_decision: decision });
 
   // 상점 전환은 승인하는 순간 상점을 뺀다. 그사이 벌점 등으로 상점이 모자라면 승인할 수 없다.
   const isConversion = grant.source === 'merit';
@@ -864,6 +872,9 @@ export function givePoints(input, now = Date.now()) {
     errors.reason = `사유는 ${MAX_REASON_LENGTH}자 이하로 입력하세요.`;
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    return remoteWrite('give_points', { p_token: token, p_user_id: target.id, p_kind: input.kind, p_points: points, p_reason: reason });
+  }
 
   // 벌점은 지금 상점까지만 깎는다 (0점 아래로 내려가지 않음). 처음 준 벌점 점수는 기록에 남긴다.
   const deducted = input.kind === 'merit' ? points : Math.min(points, Math.max(0, meritBalance(target.id)));
@@ -904,6 +915,7 @@ export function requestMeritConversion(input, now = Date.now()) {
     }
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteWrite('request_merit_conversion', { p_token: token, p_target: target, p_count: count });
 
   const cost = count * MERIT_COSTS[target];
   const grant = {
