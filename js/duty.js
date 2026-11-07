@@ -731,7 +731,7 @@ function openRejectDialog(redraw, w) {
       <p class="help swap-target"></p>
       <label class="field">
         <span class="field-label">반려 사유 (요청한 병사에게 보임)</span>
-        <input name="reject_reason" maxlength="100" placeholder="예: 그날 위병소 인원 조정 필요">
+        <input name="reject_reason" maxlength="100" placeholder="예: 그날 인원 조정 필요">
         <span class="field-error" data-error-for="reject_reason" hidden></span>
       </label>
       <p class="form-error" role="alert" hidden></p>

@@ -26,7 +26,7 @@
 // - duty_posts: 근무지. slots는 시간대 이름 목록(시간대마다 하루 1명), start_date는 순번 기준일(그날 명단 1번부터 시작).
 //   duty_rosters: 근무지별 순번 명단(order 순서). 근무자는 저장하지 않고 이것으로 매번 계산한다.
 //   duty_overrides: 간부의 손 수정·근무 교대로 바뀐 근무(slot은 시간대 번호, 0부터). duty_swaps: 근무 교대 요청.
-//   가상 근무지: 불침번 1~4번초(병사 10명), 위병소 주간·야간(병사 6명)
+//   가상 근무지: 불침번 1~4번초(병사 10명). 위병소는 2026-11-07 사용자 요청으로 뺐다
 
 export const mockDb = {
   "profiles": [
@@ -812,16 +812,6 @@ export const mockDb = {
       ],
       "start_date": "2026-10-19",
       "is_active": true
-    },
-    {
-      "id": "d02",
-      "name": "위병소",
-      "slots": [
-        "주간",
-        "야간"
-      ],
-      "start_date": "2026-10-19",
-      "is_active": true
     }
   ],
   "duty_rosters": [
@@ -874,36 +864,6 @@ export const mockDb = {
       "post_id": "d01",
       "user_id": "u14",
       "order": 10
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u15",
-      "order": 1
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u16",
-      "order": 2
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u17",
-      "order": 3
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u18",
-      "order": 4
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u19",
-      "order": 5
-    },
-    {
-      "post_id": "d02",
-      "user_id": "u20",
-      "order": 6
     }
   ],
   "duty_overrides": [],
