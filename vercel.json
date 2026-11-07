@@ -1,0 +1,5 @@
+{
+  "framework": null,
+  "buildCommand": "node tools/vercel_build.mjs",
+  "outputDirectory": "public"
+}

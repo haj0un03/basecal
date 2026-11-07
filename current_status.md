@@ -38,7 +38,7 @@
   - 아직 이 기기의 가상 데이터인 것: 없음 (서버 모드에서는 모든 기능이 서버에 저장된다) → **새로고침하면 처음으로 돌아간다**
   - 서버 모드에서는 들어오기 화면에 연습용 코드 목록이 안 보인다
 - **가상 데이터 모드:** `js/config.js`를 지우면 예전처럼 코드 안의 가상 데이터로만 동작한다. 자동 점검은 이 모드로 돈다.
-- Vercel 배포 주소에는 `js/config.js`가 없어서 가상 데이터 모드로 뜬다 (Vercel에서 만드는 방법은 나중에 정한다).
+- Vercel 배포: `vercel.json` + `tools/vercel_build.mjs`가 앱 파일만 `public/`에 모으고, Vercel 환경 변수(SUPABASE_URL, SUPABASE_ANON_KEY)가 있으면 `js/config.js`를 만든다(11/7). 환경 변수를 넣기 전에는 가상 데이터 모드
 
 **Supabase 구조 (Phase 5)**
 - 표 만들기: `supabase/` 폴더의 SQL 파일을 번호 순서대로 Supabase SQL Editor에 붙여 넣고 Run (사용자가 실행. 사용자 결정)
@@ -108,6 +108,12 @@
 ## 오늘 한 것
 
 2026-11-07.
+
+- **Vercel에서도 서버 모드로 (사용자 결정, 코드 완료, 사용자가 Vercel 환경 변수 넣고 Push·확인 대기)**
+  - `vercel.json`: 배포 때 `node tools/vercel_build.mjs` 실행, `public/`을 배포
+  - `tools/vercel_build.mjs`: 앱 파일(index.html, css, js)만 `public/`에 복사 → 문서·점검·SQL·slides는 배포 주소에 안 올라감. 환경 변수가 있으면 `js/config.js` 생성(주소 끝 /rest/v1 떼기, 비밀 키면 배포 중단), 없으면 가상 데이터 모드
+  - 키는 저장소에 넣지 않고 Vercel 설정에만 둔다(CLAUDE.md 보안 규칙). 이 PC에는 Node가 없어 빌드 스크립트를 직접 돌려 보지 못했다 → Vercel 배포 기록으로 확인
+  - 서버 모드가 되면 배포 주소를 아는 사람은 들어오기 화면까지 볼 수 있다(들어가려면 이름+개인 코드, 데이터는 모두 가상)
 
 - **Phase 5-4 시설 예약을 서버로 → 완료 (사용자가 06 SQL 실행 후 브라우저에서 확인: 남의 대기 "신청 중"·승인 "예약 · 이름", 예약 신청이 새로고침 뒤에도 남음, 간부 승인·시설 막기, 병사 달력에 "시설"·막은 시간 "사용 불가")**
   - `supabase/06_facility.sql`: facilities(7곳), reservations, facility_blocks 표(가상 예약·막기 그대로). 서버 함수 request_reservation, cancel_reservation, decide_reservation, add_facility_block, delete_facility_block
@@ -256,7 +262,7 @@
 
 1. **Phase 5 이어서**
    - 완료 기준 확인: 휴대폰 두 대에서 같은 데이터가 보이고, 동시에 신청해도 정원을 넘지 않는다
-   - Vercel에서도 서버 모드로 뜨게 하는 방법 정하기 (지금 Vercel은 가상 데이터 모드)
+   - Vercel 서버 모드: 코드 완료, 사용자가 Vercel 환경 변수 넣고 Push 후 확인
    - Claude의 서버 자동 점검(병사가 남의 개인 일정·신청을 못 받는지 등)은 인터넷이 되는 환경에서 다시 돌리기
 2. **달력 탭 현황판 (사용자 결정 순서: 5-3 뒤)**: 간부는 날짜 칸에 "출타 4/7", 날짜를 누르면 출타자·근무자 이름. 병사는 날짜 칸에 "자리 N"·"마감" (내 근무는 이미 표시됨)
 3. **사용자가 정할 것**

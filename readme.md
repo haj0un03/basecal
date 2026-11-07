@@ -67,6 +67,18 @@ python tools/make_config.py
 
 Supabase 모드에서는 들어오기 화면에 연습용 코드 목록이 보이지 않습니다. 위 표의 코드를 그대로 쓰면 됩니다.
 
+### Vercel 배포 주소를 Supabase 모드로 띄우기
+
+배포할 때 `tools/vercel_build.mjs`가 앱 파일(`index.html`, `css`, `js`)만 모아 올리고, Vercel에 넣어 둔 환경 변수로 `js/config.js`를 만듭니다. 키는 저장소에 올리지 않습니다.
+
+1. Vercel 화면 → 이 프로젝트 → **Settings → Environment Variables**에 두 값을 넣습니다 (Production, Preview 모두 체크).
+   - `SUPABASE_URL`: Supabase Project URL (`https://….supabase.co`)
+   - `SUPABASE_ANON_KEY`: 공개용(publishable) 키. 비밀(secret) 키를 넣으면 배포가 멈춥니다
+2. GitHub Desktop으로 Push하면 다시 배포됩니다. 이미 Push했다면 Vercel 화면 → Deployments → 맨 위 배포의 ⋯ → **Redeploy**.
+3. 배포 주소의 들어오기 화면에 "연습용 가상 인원 코드 보기"가 안 보이면 Supabase 모드입니다.
+
+환경 변수를 지우고 다시 배포하면 가상 데이터 모드로 돌아갑니다.
+
 ### 자동 점검
 
 PC에 Edge(또는 Chrome)가 있으면 아래 명령으로 화면 기능을 자동으로 점검합니다. 서버에는 쓰지 않습니다(가상 데이터로 돕니다).
