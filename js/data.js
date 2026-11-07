@@ -58,6 +58,11 @@ let token = REMOTE ? readStore(TOKEN_KEY, null) : null;
 let remoteSoldierCount = null;
 // 병사가 받은 다른 병사의 출타: 날짜와 종류만 (이름·번호 없음). 남은 자리를 셀 때만 쓴다 (5-3b)
 let remoteOtherAbsences = [];
+// 서버가 계산한 근무표 (5-3c). 'post_id|date' → [{ slot, user_id, source }]. 받은 기간 밖의 날짜는 비어 있다
+let remoteDutyBoard = null;
+// 병사가 받은 이름 (근무표·교대 상대). 병사는 다른 병사의 profiles를 받지 않는다
+const remoteNames = new Map();
+let remoteSoldierNames = [];
 
 // 서버에서 화면에 필요한 데이터를 다시 받는다. 앱을 열 때와 서버에 쓴 뒤에 부른다.
 // 결과: true(받음) / false(접속이 끊김 → 나간 상태로)
@@ -89,6 +94,26 @@ async function loadState() {
     remoteOtherAbsences = (state.other_absences ?? []).map((r) => ({ ...r, status: 'requested' }));
   }
   // 5-3a: 휴가 일수·상점 (서버에 03_leave_merit.sql을 아직 실행하지 않았으면 없다 → 가상 데이터를 그대로 쓴다)
+  // 5-3c: 근무 (서버에 05_duty.sql을 아직 실행하지 않았으면 없다 → 가상 데이터로 계산한다)
+  if (state.duty_board) {
+    replace('duty_posts', state.duty_posts);
+    replace('duty_rosters', state.duty_rosters);
+    replace('duty_overrides', state.duty_overrides);
+    replace('duty_swaps', state.duty_swaps);
+    remoteDutyBoard = new Map();
+    state.duty_board.rows.forEach((r) => {
+      const key = `${r.post_id}|${r.date}`;
+      if (!remoteDutyBoard.has(key)) remoteDutyBoard.set(key, []);
+      remoteDutyBoard.get(key).push({ slot: r.slot, user_id: r.user_id, source: r.source });
+      if (r.user_id && r.name) remoteNames.set(r.user_id, r.name);
+    });
+    state.duty_swaps.forEach((w) => {
+      remoteNames.set(w.requester_id, w.requester_name);
+      remoteNames.set(w.partner_id, w.partner_name);
+    });
+    remoteSoldierNames = state.soldier_names ?? [];
+    remoteSoldierNames.forEach((x) => remoteNames.set(x.id, x.name));
+  }
   if (state.leave_grants) replace('leave_grants', state.leave_grants);
   if (state.merit_points) replace('merit_points', state.merit_points);
   remoteSoldierCount = state.active_soldiers;
@@ -1469,16 +1494,17 @@ export function applyAbsence(input, now = Date.now()) {
 // - 그날 나가 있는(휴가·외박·외출) 사람이나 이미 그날 근무가 있는 사람은 건너뛰고, 그날 순번에 없는 다음 사람이 대신 선다.
 //   다른 날의 순번은 밀리지 않는다.
 // - 간부의 손 수정·근무 교대 결과(duty_overrides)가 있으면 그 사람이 선다.
-// - 근무는 아직 가상 데이터다 (Supabase로는 휴가와 함께 옮긴다).
+// - 서버 모드(5-3c)에서는 서버가 근무표를 계산해 주고(postDay가 그 결과를 쓴다), 바꾸는 기능은 서버 함수를 부른다.
 
 const MAX_POST_NAME_LENGTH = 20;
 const MAX_SLOT_LABEL_LENGTH = 10;
 const MAX_SLOTS = 8;
-// 서버 모드에서 병사는 다른 병사의 명단을 받지 않는다. 근무를 서버로 옮기기 전까지는 가상 인원 이름으로 보여 준다.
+// 서버 모드에서 병사는 다른 병사의 profiles를 받지 않는다. 근무표·교대에 필요한 이름은 서버가 따로 준다(remoteNames).
+// 05_duty.sql 실행 전에는 가상 인원 이름으로 보여 준다.
 const MOCK_NAMES = new Map(mockDb.profiles.map((p) => [p.id, p.name]));
 
 function nameOf(userId) {
-  return mockDb.profiles.find((p) => p.id === userId)?.name ?? MOCK_NAMES.get(userId) ?? '(알 수 없음)';
+  return mockDb.profiles.find((p) => p.id === userId)?.name ?? remoteNames.get(userId) ?? MOCK_NAMES.get(userId) ?? '(알 수 없음)';
 }
 
 function daysFrom(start, iso) {
@@ -1507,6 +1533,15 @@ function activePosts() {
 // 한 근무지의 그날 근무. 결과: [{ slot, label, user_id(대신 설 사람이 없으면 null), source }]
 // source: rotation(순번) | substitute(대신 섬) | manual(간부 손 수정) | swap(교대)
 function postDay(post, iso) {
+  // 서버 모드: 서버가 계산한 근무표를 쓴다 (병사는 다른 병사의 출타를 몰라도 "대신 섬"이 반영된다)
+  if (remoteDutyBoard) {
+    return (remoteDutyBoard.get(`${post.id}|${iso}`) ?? []).map((x) => ({
+      slot: x.slot,
+      label: post.slots[x.slot] ?? `${x.slot + 1}번`,
+      user_id: x.user_id,
+      source: x.source,
+    }));
+  }
   const roster = rosterOf(post.id);
   const k = post.slots.length;
   const n = roster.length;
@@ -1621,6 +1656,9 @@ export function saveDutyPost(input, now = Date.now()) {
     errors.roster = `하루에 ${slots.length}명이 서므로 명단에 ${slots.length}명 이상 넣으세요.`;
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    return remoteWrite('save_duty_post', { p_token: token, p_id: existing?.id ?? null, p_name: name, p_slots: slots, p_roster: roster });
+  }
 
   const today = localISO(new Date(now));
   const changed =
@@ -1649,6 +1687,7 @@ export function deleteDutyPost(id, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
   const post = mockDb.duty_posts.find((p) => p.id === id && p.is_active);
   if (!post) return { ok: false, reason: 'not_found' };
+  if (REMOTE) return remoteWrite('delete_duty_post', { p_token: token, p_id: id });
   post.is_active = false;
   writeAuditLog(officer, 'delete_duty_post', 'duty_posts', post.id, now);
   return { ok: true };
@@ -1712,6 +1751,9 @@ export function setDutyOverride(input, now = Date.now()) {
     if (other) message = `${soldier.name}은(는) 이날 이미 ${other} 근무가 있습니다.`;
   }
   if (message) return { ok: false, reason: 'invalid', errors: { user_id: message } };
+  if (REMOTE) {
+    return remoteWrite('set_duty_override', { p_token: token, p_post_id: input.post_id, p_date: input.date, p_slot: slot, p_user_id: userId });
+  }
 
   mockDb.duty_overrides = mockDb.duty_overrides.filter(
     (o) => !(o.post_id === input.post_id && o.date === input.date && o.slot === slot),
@@ -1737,6 +1779,7 @@ export function clearDutyOverride(input, now = Date.now()) {
   const target = overrideTarget(input.post_id, input.date, slot, now);
   if (target.error === 'not_found') return { ok: false, reason: 'not_found' };
   if (target.error) return { ok: false, reason: 'invalid', errors: { user_id: target.message } };
+  if (REMOTE) return remoteWrite('clear_duty_override', { p_token: token, p_post_id: input.post_id, p_date: input.date, p_slot: slot });
   const before = mockDb.duty_overrides.length;
   mockDb.duty_overrides = mockDb.duty_overrides.filter(
     (o) => !(o.post_id === input.post_id && o.date === input.date && o.slot === slot),
@@ -1852,6 +1895,9 @@ function pendingSwapOn(d) {
 export function getSwapPartners() {
   const user = getCurrentUser();
   if (!user || user.role !== 'soldier') return [];
+  if (remoteDutyBoard) {
+    return remoteSoldierNames.filter((x) => x.id !== user.id).map((x) => ({ id: x.id, name: x.name }));
+  }
   return mockDb.profiles
     .filter((p) => p.is_active && p.role === 'soldier' && p.id !== user.id)
     .map((p) => ({ id: p.id, name: p.name }))
@@ -1895,6 +1941,22 @@ export function requestDutySwap(input, now = Date.now()) {
     }
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    const mine = swap.requester_duty;
+    const theirs = swap.partner_duty;
+    return remoteWrite('request_duty_swap', {
+      p_token: token,
+      p_kind: kind,
+      p_r_post: mine.post_id,
+      p_r_date: mine.date,
+      p_r_slot: mine.slot,
+      p_partner_id: swap.partner_id,
+      p_p_post: theirs?.post_id ?? null,
+      p_p_date: theirs?.date ?? null,
+      p_p_slot: theirs?.slot ?? null,
+      p_reason: reason,
+    });
+  }
   const row = {
     id: nextId('w', mockDb.duty_swaps),
     ...swap,
@@ -1941,6 +2003,7 @@ export function cancelDutySwap(id, now = Date.now()) {
   if (!s) return { ok: false, reason: 'not_found' };
   if (s.requester_id !== user.id) return { ok: false, reason: 'forbidden' };
   if (s.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  if (REMOTE) return remoteWrite('cancel_duty_swap', { p_token: token, p_id: id });
   s.status = 'cancelled';
   s.decided_at = new Date(now).toISOString();
   return { ok: true };
@@ -1955,6 +2018,10 @@ export function decideDutySwap(id, decision, rejectReason = '', now = Date.now()
   const s = mockDb.duty_swaps.find((x) => x.id === id);
   if (!s) return { ok: false, reason: 'not_found' };
   if (s.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  // 서버 모드: 다시 확인과 근무 바꾸기를 서버가 한 번에 한다
+  if (REMOTE) {
+    return remoteWrite('decide_duty_swap', { p_token: token, p_id: id, p_decision: decision, p_reject_reason: rejectReason ?? '' });
+  }
   if (decision === 'reject') {
     const text = String(rejectReason ?? '').trim();
     if (!text) return { ok: false, reason: 'invalid', errors: { reject_reason: '반려 사유를 입력하세요.' } };
