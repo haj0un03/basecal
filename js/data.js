@@ -1836,7 +1836,10 @@ function checkSwap(swap, now) {
   const win = getApplyWindow(now);
   const mine = swap.requester_duty;
   const theirs = swap.partner_duty;
-  const partner = mockDb.profiles.find((p) => p.id === swap.partner_id && p.is_active && p.role === 'soldier');
+  // 서버 모드 병사는 다른 병사의 profiles를 받지 않으므로, 서버가 준 활성 병사 이름 목록에서 찾는다
+  const partner =
+    mockDb.profiles.find((p) => p.id === swap.partner_id && p.is_active && p.role === 'soldier') ??
+    remoteSoldierNames.find((x) => x.id === swap.partner_id);
   const requesterName = nameOf(swap.requester_id);
   if (!partner) return '교대할 병사를 고르세요.';
   if (partner.id === swap.requester_id) return '자기 자신과는 교대할 수 없습니다.';
