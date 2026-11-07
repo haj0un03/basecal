@@ -1879,13 +1879,7 @@ export function getDutySwaps(now = Date.now()) {
       : mockDb.duty_swaps.filter((s) => s.requester_id === user.id || s.partner_id === user.id);
   return [...rows].sort(swapOrder).map((s) => {
     const view = swapView(s, user.id);
-    if (user.role === 'officer' && s.status === 'pending') {
-      view.problem = checkSwap(s, now);
-      // 승인하면 이틀 연속 근무가 되는 사람 (막지 않고 알려만 준다)
-      view.consecutive = [];
-      if (s.kind === 'swap' && hasNeighborDuty(s.requester_id, s.partner_duty.date, s.requester_duty)) view.consecutive.push(nameOf(s.requester_id));
-      if (hasNeighborDuty(s.partner_id, s.requester_duty.date, s.partner_duty)) view.consecutive.push(nameOf(s.partner_id));
-    }
+    if (user.role === 'officer' && s.status === 'pending') view.problem = checkSwap(s, now);
     return view;
   });
 }
@@ -2359,7 +2353,8 @@ function approvedReservationsOf(userId, start, end) {
 
 // ── 연속 근무 주의 (2026-11-07 사용자 요청) ─────────────────
 // 이틀 연달아 근무를 서는 병사를 찾는다. 막지는 않고 간부에게 "연속 근무 주의"로 알려 준다.
-// 순번대로만 돌면 잘 생기지 않고, 대신 서기·손 수정·교대로 생긴다.
+// 교대(맞바꾸기·대신 서기)로 생긴 연속 근무는 병사끼리 합의한 것이라 알리지 않는다 (2026-11-07 사용자 결정).
+// 자동 대신 섬(휴가자 자리 채움)·간부 손 수정·순번으로 생긴 것은 알린다.
 
 function prevDay(iso) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -2367,35 +2362,39 @@ function prevDay(iso) {
 }
 
 // 그날 근무를 서면 전날이나 다음 날에도 근무가 있는지 (exclude: 내놓는 근무, 없으면 null)
+// 교대로 받은 근무는 세지 않는다 (연속 근무 목록과 같은 규칙)
 function hasNeighborDuty(userId, iso, exclude) {
-  return dutiesOf(userId, prevDay(iso), nextDay(iso)).some((d) => d.date !== iso && !sameDuty(d, exclude));
+  return dutiesOf(userId, prevDay(iso), nextDay(iso)).some((d) => d.date !== iso && !sameDuty(d, exclude) && d.source !== 'swap');
 }
 
 // 간부만. 오늘부터 한 달 동안 이틀 이상 연속으로 근무하는 병사 (어제 근무 + 오늘 근무도 센다)
+// 이어지는 두 날 중 하루라도 교대로 받은 근무면 그 사이는 잇지 않는다.
 // 결과: [{ user_id, name, start, end, days }] 시작일 순
 export function getConsecutiveDuties(now = Date.now()) {
   if (!requireOfficer()) return [];
   const win = getApplyWindow(now);
   const from = prevDay(win.start);
+  // 사람마다 근무한 날 → 그날 근무가 교대로 받은 것인지
   const byUser = new Map();
   const posts = activePosts();
   for (let iso = from; iso <= win.end; iso = nextDay(iso)) {
     posts.forEach((post) => {
       postDay(post, iso).forEach((x) => {
         if (!x.user_id) return;
-        if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Set());
-        byUser.get(x.user_id).add(iso);
+        if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Map());
+        const days = byUser.get(x.user_id);
+        days.set(iso, (days.get(iso) ?? false) || x.source === 'swap');
       });
     });
   }
   const result = [];
-  byUser.forEach((dates, userId) => {
-    const sorted = [...dates].sort();
+  byUser.forEach((days, userId) => {
+    const sorted = [...days.keys()].sort();
     let runStart = null;
     sorted.forEach((iso, i) => {
       if (runStart === null) runStart = iso;
       const next = sorted[i + 1];
-      if (next !== nextDay(iso)) {
+      if (next !== nextDay(iso) || days.get(iso) || days.get(next)) {
         if (runStart !== iso && iso >= win.start) {
           result.push({ user_id: userId, name: nameOf(userId), start: runStart, end: iso, days: daysFrom(runStart, iso) + 1 });
         }

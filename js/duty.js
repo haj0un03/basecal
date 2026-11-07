@@ -575,7 +575,6 @@ function swapItem(redraw, w, user) {
   }
   if (user.role === 'officer' && w.status === 'pending') {
     if (w.problem) item.append(el('span', 'grant-meta swap-problem', `지금은 승인할 수 없음: ${w.problem}`));
-    else if (w.consecutive?.length) item.append(el('span', 'grant-meta duty-consecutive-note', `연속 근무 주의: 승인하면 이틀 연속 근무가 됩니다 (${w.consecutive.join(', ')})`));
     const approve = button('small-button approve', '승인', null, async () => {
       const result = await decideDutySwap(w.id, 'approve');
       if (!result.ok) window.alert(result.reason === 'stale' ? result.message : result.reason === 'network' ? NETWORK_ERROR : '승인할 수 없습니다.');
@@ -863,7 +862,7 @@ function consecutiveParts(redraw) {
     parts.push(el('p', 'cal-empty', '앞으로 한 달 동안 이틀 연속 근무하는 병사가 없습니다.'));
     return parts;
   }
-  parts.push(el('p', 'help', '이틀 이상 연달아 근무하는 병사입니다. 누르면 아래 근무표가 그날로 바뀝니다. 필요하면 "바꾸기"로 근무자를 바꾸세요.'));
+  parts.push(el('p', 'help', '이틀 이상 연달아 근무하는 병사입니다(병사끼리 합의한 교대로 생긴 것은 빼고). 누르면 아래 근무표가 그날로 바뀝니다. 필요하면 "바꾸기"로 근무자를 바꾸세요.'));
   const ul = el('ul', 'duty-consecutive-list');
   list.forEach((x) => {
     const li = el('li');
