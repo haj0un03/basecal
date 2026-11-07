@@ -1,5 +1,5 @@
 // 신청 탭 근무 영역 (Phase 3.5, prd.md "추가. 근무 순번 편성")
-// - 병사: 내 근무(오늘부터 한 달), 날짜별 근무표
+// - 병사("근무 교대" 탭): 내 근무 달력(오늘부터 한 달), 날짜별 근무표
 // - 간부: 날짜별 근무표와 근무자 손 수정(3.5-2), 근무지·시간대·순번 명단 만들기·고치기·없애기
 // 근무자는 순번으로 계산되어 각자의 달력에 "근무"로 자동 표시된다.
 import {
@@ -26,6 +26,8 @@ dutyDialog.addEventListener('close', () => {
 
 // 근무표에서 보고 있는 날짜 (다시 그려도 유지)
 const boardState = { date: null };
+// 내 근무 달력에서 보고 있는 달과 고른 날짜 (다시 그려도 유지)
+const calState = { userId: null, year: null, month: null, selected: null };
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -61,37 +63,119 @@ function subHead(title, ...actions) {
 
 export function renderDutySection(section, user, focusSelector) {
   const redraw = (selector) => renderDutySection(section, user, selector);
-  const parts = [el('h2', '', '근무')];
-  if (user.role === 'soldier') parts.push(...myDutyParts());
+  const parts = [el('h2', '', user.role === 'soldier' ? '근무 교대' : '근무')];
+  if (user.role === 'soldier') parts.push(...myDutyParts(redraw, user));
   parts.push(...boardParts(redraw, user));
   if (user.role === 'officer') parts.push(...postParts(redraw));
   section.replaceChildren(...parts);
   if (focusSelector) section.querySelector(focusSelector)?.focus();
 }
 
-// ── 병사: 내 근무 ──────────────────────────────────────────
+// ── 병사: 내 근무 달력 ─────────────────────────────────────
+// 오늘부터 한 달 동안의 근무를 달력으로 보여 준다. 날짜를 누르면 그날 근무 내용이 보이고 아래 근무표도 그날로 바뀐다.
 
-function myDutyParts() {
+function isoOf(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function myDutyParts(redraw, user) {
   const win = getApplyWindow();
   const duties = getMyDuties(win.start, win.end);
-  const parts = [subHead('내 근무')];
-  parts.push(el('p', 'help', `${shortDay(win.start)}부터 한 달 동안의 근무입니다. 달력에도 "근무"로 보입니다.`));
-  if (duties.length === 0) {
-    parts.push(el('p', 'cal-empty', '이 기간에 근무가 없습니다.'));
-    return parts;
+  const byDate = new Map();
+  duties.forEach((d) => byDate.set(d.date, [...(byDate.get(d.date) ?? []), d]));
+  if (calState.userId !== user.id) {
+    // 처음이거나 다른 사람으로 들어왔으면 이번 달부터
+    const [y, m] = win.start.split('-').map(Number);
+    Object.assign(calState, { userId: user.id, year: y, month: m - 1, selected: null });
   }
-  const list = el('ul', 'grant-list duty-list');
-  duties.forEach((d) => {
-    const item = el('li', 'grant-item duty-item');
-    item.dataset.date = d.date;
-    item.append(
-      el('span', 'type-badge type-duty', '근무'),
-      el('span', 'grant-title', `${shortDay(d.date)} ${d.post_name} ${d.label}`),
-    );
-    if (SOURCE_LABELS[d.source]) item.append(el('span', 'grant-meta', SOURCE_LABELS[d.source]));
-    list.append(item);
+  const { year, month } = calState;
+
+  const parts = [subHead('내 근무')];
+  parts.push(el('p', 'help', `${shortDay(win.start)}부터 한 달 동안의 근무입니다. 날짜를 누르면 그날 근무와 근무표를 봅니다. 달력 탭에도 "근무"로 보입니다.`));
+  const box = el('div', 'apply-box duty-cal-box');
+
+  // 달 넘기기 (오늘부터 한 달이 걸친 달만)
+  const [minY, minM] = win.start.split('-').map(Number);
+  const [maxY, maxM] = win.end.split('-').map(Number);
+  const cur = year * 12 + month;
+  const min = minY * 12 + (minM - 1);
+  const max = maxY * 12 + (maxM - 1);
+  const move = (n, action) => {
+    const d = new Date(year, month + n, 1);
+    calState.year = d.getFullYear();
+    calState.month = d.getMonth();
+    // 끝 달에 닿아 누른 버튼이 막히면 반대쪽 버튼에 초점을 둔다
+    const at = calState.year * 12 + calState.month;
+    const stuck = (n > 0 && at >= max) || (n < 0 && at <= min);
+    redraw(`[data-action="${stuck ? (n > 0 ? 'duty-cal-prev' : 'duty-cal-next') : action}"]`);
+  };
+  const nav = el('div', 'apply-nav');
+  const prev = button('cal-nav-button', '‹', 'duty-cal-prev', () => move(-1, 'duty-cal-prev'));
+  prev.setAttribute('aria-label', '이전 달');
+  prev.disabled = cur <= min;
+  const next = button('cal-nav-button', '›', 'duty-cal-next', () => move(1, 'duty-cal-next'));
+  next.setAttribute('aria-label', '다음 달');
+  next.disabled = cur >= max;
+  nav.append(prev, el('span', 'apply-month', `${year}년 ${month + 1}월`), next);
+  box.append(nav);
+
+  const grid = el('div', 'duty-cal');
+  WEEKDAYS.forEach((name, i) => {
+    const head = el('div', 'cal-weekday', name);
+    if (i === 0) head.classList.add('sun');
+    if (i === 6) head.classList.add('sat');
+    grid.append(head);
   });
-  parts.push(list);
+  const first = new Date(year, month, 1).getDay();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  for (let i = 0; i < first; i += 1) grid.append(el('div', 'duty-cal-blank'));
+  for (let day = 1; day <= lastDay; day += 1) {
+    const iso = isoOf(year, month, day);
+    const col = (first + day - 1) % 7;
+    const mine = byDate.get(iso) ?? [];
+    const outside = iso < win.start || iso > win.end;
+    const cell = button('duty-cal-day', '', null, () => {
+      calState.selected = iso;
+      boardState.date = iso;
+      redraw(`.duty-cal-day[data-date="${iso}"]`);
+    });
+    cell.dataset.date = iso;
+    cell.append(el('span', 'duty-cal-num', String(day)));
+    if (col === 0) cell.classList.add('sun');
+    if (col === 6) cell.classList.add('sat');
+    if (iso === win.start) cell.classList.add('today');
+    if (iso === calState.selected) cell.classList.add('selected');
+    cell.setAttribute('aria-pressed', String(iso === calState.selected));
+    let label = '';
+    if (outside) {
+      cell.disabled = true;
+      cell.classList.add('outside');
+    } else if (mine.length) {
+      // 근무 색과 "근무" 글자, 시간대 (색만으로 구분하지 않음)
+      cell.classList.add('has-duty');
+      cell.append(el('span', 'duty-cal-tag', mine.length > 1 ? `근무 ${mine.length}` : '근무'));
+      cell.append(el('span', 'duty-cal-slot', mine.length > 1 ? '' : mine[0].label));
+      label = `, 근무: ${mine.map((d) => `${d.post_name} ${d.label}`).join(', ')}`;
+    }
+    cell.setAttribute('aria-label', `${shortDay(iso)}${label}`);
+    grid.append(cell);
+  }
+  box.append(grid);
+
+  // 고른 날의 근무 내용
+  const sel = calState.selected;
+  const detail = el('p', 'duty-cal-detail');
+  detail.setAttribute('aria-live', 'polite');
+  if (!sel) {
+    detail.textContent = duties.length ? `이 기간 근무 ${duties.length}번. 날짜를 누르면 내용을 봅니다.` : '이 기간에 근무가 없습니다.';
+  } else {
+    const list = byDate.get(sel) ?? [];
+    detail.textContent = list.length
+      ? `${shortDay(sel)} ${list.map((d) => `${d.post_name} ${d.label}${SOURCE_LABELS[d.source] ? ` (${SOURCE_LABELS[d.source]})` : ''}`).join(', ')}`
+      : `${shortDay(sel)} 근무 없음`;
+  }
+  box.append(detail);
+  parts.push(box);
   return parts;
 }
 
@@ -106,11 +190,13 @@ function boardParts(redraw, user) {
   const nav = el('div', 'apply-nav duty-nav');
   const prev = button('cal-nav-button', '‹', 'duty-prev', () => {
     boardState.date = addDays(date, -1);
+    calState.selected = boardState.date;
     redraw('[data-action="duty-prev"]');
   });
   prev.setAttribute('aria-label', '전날');
   const next = button('cal-nav-button', '›', 'duty-next', () => {
     boardState.date = addDays(date, 1);
+    calState.selected = boardState.date;
     redraw('[data-action="duty-next"]');
   });
   next.setAttribute('aria-label', '다음 날');
@@ -120,6 +206,7 @@ function boardParts(redraw, user) {
     nav.append(
       button('small-button', '오늘', 'duty-today', () => {
         boardState.date = today;
+        calState.selected = null;
         redraw('[data-action="duty-today"]');
       }),
     );

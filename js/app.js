@@ -26,7 +26,8 @@ const TABS = {
 
 const APPLY_PANELS = [
   { key: 'leave', label: '휴가' },
-  { key: 'duty', label: '근무' },
+  // 병사에게는 "근무 교대", 간부에게는 "근무"
+  { key: 'duty', label: '근무', soldierLabel: '근무 교대' },
   {
     key: 'facility',
     label: '시설',
@@ -94,7 +95,7 @@ function renderSection(spec, user) {
 }
 
 // 신청 탭 위쪽 탭: 휴가 | 근무 | 시설
-function applyNav(panel) {
+function applyNav(panel, user) {
   const nav = document.createElement('nav');
   nav.className = 'subtabs';
   nav.setAttribute('aria-label', '신청 메뉴');
@@ -103,7 +104,7 @@ function applyNav(panel) {
     link.className = 'subtab';
     link.href = `#apply/${x.key}`;
     link.dataset.panel = x.key;
-    link.textContent = x.label;
+    link.textContent = user.role === 'soldier' && x.soldierLabel ? x.soldierLabel : x.label;
     if (x.key === panel) link.setAttribute('aria-current', 'page');
     nav.append(link);
   });
@@ -127,7 +128,7 @@ function renderView(user) {
   }
   if (tab === 'apply') {
     lastPanel = panel;
-    parts.push(applyNav(panel));
+    parts.push(applyNav(panel, user));
     const spec = APPLY_PANELS.find((x) => x.key === panel);
     if (spec.placeholder) {
       parts.push(renderSection(spec.placeholder, user));
