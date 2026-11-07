@@ -7,6 +7,9 @@ import {
   addUnitEvent,
   updateUnitEvent,
   deleteUnitEvent,
+  getTrainingRateInfo,
+  setTrainingRate,
+  removeTrainingRate,
   NETWORK_ERROR,
 } from './data.js';
 
@@ -383,8 +386,13 @@ export function renderCalendar(container, user, today = new Date()) {
             : `"${e.title}" 일정을 지울까요?`;
           if (!window.confirm(question)) return;
           remove.disabled = true;
+          const linked = isUnit ? getTrainingRateInfo(e.id)?.linked : null;
           const result = await (isUnit ? deleteUnitEvent(e.id) : deletePersonalEvent(e.id));
           if (result.reason === 'network') window.alert(NETWORK_ERROR);
+          // 훈련과 연결된 0% 출타율도 지울지 묻는다
+          if (result.ok && linked && window.confirm(`이 훈련 기간(${linked.start_date} ~ ${linked.end_date})의 0% 출타율도 지울까요?`)) {
+            removeTrainingRate(e.id);
+          }
           redraw('[data-action="add-event"]');
         });
         actions.append(edit, remove);
@@ -574,6 +582,7 @@ function openUnitEventDialog({ event = null, date = null }) {
 
     if (result.ok) {
       eventDialog.close();
+      suggestTrainingRate(result.event);
       if (state) {
         const [y, m] = result.event.start_date.split('-').map(Number);
         state.year = y;
@@ -608,4 +617,28 @@ function openUnitEventDialog({ event = null, date = null }) {
   form.querySelector('[data-action="close"]').addEventListener('click', () => eventDialog.close());
   eventDialog.showModal();
   (f.unit_category.value === 'training' ? f.start_date : f.title).focus();
+}
+
+// 훈련 부대 일정을 저장한 뒤: 그 기간 출타율을 0%로 할지 묻는다 (2026-11-07 사용자 요청)
+// - 처음이면 "0%로 할까요?", 날짜가 바뀌었으면 "새 기간으로 옮길까요?", 훈련이 아니게 되었으면 "지울까요?"
+function suggestTrainingRate(event) {
+  const info = getTrainingRateInfo(event.id);
+  if (!info) return;
+  const period = `${event.start_date} ~ ${event.end_date}`;
+  const already = info.absences > 0 ? `\n이미 신청된 출타 ${info.absences}건은 그대로 두고 "초과"로 표시됩니다.` : '';
+  if (event.unit_category !== 'training') {
+    if (info.linked && window.confirm(`훈련이 아니게 되었습니다. 이 기간(${info.linked.start_date} ~ ${info.linked.end_date})의 0% 출타율을 지울까요?`)) {
+      removeTrainingRate(event.id);
+    }
+    return;
+  }
+  if (!info.linked) {
+    if (window.confirm(`훈련 기간(${period})의 출타율을 0%로 할까요?\n총 출타·휴가 모두 0%가 되어 이 기간에는 새 출타 신청을 받지 않습니다.${already}`)) {
+      setTrainingRate(event.id);
+    }
+  } else if (info.linked.start_date !== event.start_date || info.linked.end_date !== event.end_date) {
+    if (window.confirm(`훈련 기간이 바뀌었습니다. 0% 출타율도 새 기간(${period})으로 옮길까요?${already}`)) {
+      setTrainingRate(event.id);
+    }
+  }
 }

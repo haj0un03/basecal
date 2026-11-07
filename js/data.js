@@ -2405,3 +2405,58 @@ export function getConsecutiveDuties(now = Date.now()) {
   });
   return result.sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name, 'ko'));
 }
+
+// ── 훈련 기간 출타율 0% 제안 (2026-11-07 사용자 요청) ─────────
+// 간부가 훈련 부대 일정을 저장하면 화면이 "그 기간 출타율을 0%로 할까요?"라고 묻는다. 자동으로 넣지 않는다.
+// 넣으면 기간별 출타율(총 출타·휴가 둘 다 0%)을 만들고 훈련 일정과 연결한다(source_event_id).
+// 이미 신청된 출타는 그대로 두고 "초과"로 표시된다(3-3 규칙). 훈련 날짜를 바꾸거나 지우면 화면이 다시 묻는다.
+
+function linkedRatePeriods(eventId) {
+  return mockDb.leave_rate_periods.filter((p) => p.source_event_id === eventId);
+}
+
+// 간부만. 결과: { linked: { start_date, end_date } 또는 null, absences(그 기간에 이미 신청된 출타 수) }
+export function getTrainingRateInfo(eventId, start = null, end = null) {
+  if (!requireOfficer()) return null;
+  const event = mockDb.events.find((e) => e.id === eventId);
+  const linked = linkedRatePeriods(eventId)[0];
+  const from = start ?? event?.start_date;
+  const to = end ?? event?.end_date;
+  const absences = from
+    ? mockDb.leave_requests.filter((r) => r.status === 'requested' && r.start_date <= to && r.end_date >= from).length
+    : 0;
+  return { linked: linked ? { start_date: linked.start_date, end_date: linked.end_date } : null, absences };
+}
+
+// 간부만. 훈련 기간에 0% 출타율을 넣는다 (이미 연결된 것이 있으면 새 기간으로 바꾼다)
+export function setTrainingRate(eventId, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const event = mockDb.events.find((e) => e.id === eventId && e.type === 'unit' && e.unit_category === 'training');
+  if (!event) return { ok: false, reason: 'not_found' };
+  mockDb.leave_rate_periods = mockDb.leave_rate_periods.filter((p) => p.source_event_id !== eventId);
+  RATE_KINDS.forEach((kind) => {
+    mockDb.leave_rate_periods.push({
+      id: nextId('p', mockDb.leave_rate_periods),
+      kind,
+      start_date: event.start_date,
+      end_date: event.end_date,
+      rate: 0,
+      created_by: officer.id,
+      created_at: new Date(now).toISOString(),
+      source_event_id: eventId,
+    });
+  });
+  writeAuditLog(officer, 'set_training_rate', 'leave_rate_periods', eventId, now);
+  return { ok: true };
+}
+
+// 간부만. 훈련과 연결된 0% 출타율을 지운다
+export function removeTrainingRate(eventId, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  if (linkedRatePeriods(eventId).length === 0) return { ok: false, reason: 'not_found' };
+  mockDb.leave_rate_periods = mockDb.leave_rate_periods.filter((p) => p.source_event_id !== eventId);
+  writeAuditLog(officer, 'remove_training_rate', 'leave_rate_periods', eventId, now);
+  return { ok: true };
+}

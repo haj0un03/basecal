@@ -1002,7 +1002,7 @@ function quotaParts(redraw, user) {
       item.dataset.periodId = p.id;
       item.append(
         el('span', 'grant-title', `${RATE_LABELS[p.kind]} ${p.rate}%`),
-        el('span', 'grant-meta', `${shortDay(p.start_date)} ~ ${shortDay(p.end_date)} · 하루 ${capacity(p.rate)}명`),
+        el('span', 'grant-meta', `${shortDay(p.start_date)} ~ ${shortDay(p.end_date)} · 하루 ${capacity(p.rate)}명${p.source_event_id ? ' · 훈련 일정과 연결' : ''}`),
       );
       const actions = el('span', 'grant-actions');
       actions.append(
