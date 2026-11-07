@@ -56,6 +56,8 @@ const TOKEN_KEY = 'basecal.token';
 let token = REMOTE ? readStore(TOKEN_KEY, null) : null;
 // 서버가 세어 준 활성 병사 수 (병사에게는 다른 병사 명단을 주지 않으므로 숫자만 받는다)
 let remoteSoldierCount = null;
+// 병사가 받은 다른 병사의 출타: 날짜와 종류만 (이름·번호 없음). 남은 자리를 셀 때만 쓴다 (5-3b)
+let remoteOtherAbsences = [];
 
 // 서버에서 화면에 필요한 데이터를 다시 받는다. 앱을 열 때와 서버에 쓴 뒤에 부른다.
 // 결과: true(받음) / false(접속이 끊김 → 나간 상태로)
@@ -72,15 +74,23 @@ async function loadState() {
     return false;
   }
   mockDb.profiles.splice(0, mockDb.profiles.length, ...state.profiles);
-  // 휴가·외박·외출 일정은 5-3에서 옮기므로 아직 이 기기의 가상 데이터를 그대로 둔다
-  // (서버에 02_events.sql을 아직 실행하지 않았으면 state.events가 없다 → 가상 일정을 그대로 쓴다)
+  // 서버에 아직 실행하지 않은 SQL의 표는 state에 없다 → 그 부분은 이 기기의 가상 데이터를 그대로 쓴다
+  // - 02_events.sql 전: 일정 / 04_absence.sql 전: 휴가·외박·외출 신청과 그 일정, 출타율
+  const replace = (table, rows) => mockDb[table].splice(0, mockDb[table].length, ...rows);
   if (state.events) {
-    const localAbsence = mockDb.events.filter((e) => ['leave', 'overnight', 'outing'].includes(e.type));
-    mockDb.events.splice(0, mockDb.events.length, ...localAbsence, ...state.events);
+    const localAbsence = state.leave_requests ? [] : mockDb.events.filter((e) => ['leave', 'overnight', 'outing'].includes(e.type));
+    replace('events', [...localAbsence, ...state.events]);
+  }
+  if (state.leave_requests) {
+    replace('leave_requests', state.leave_requests);
+    replace('leave_request_items', state.leave_request_items);
+    replace('leave_settings', state.leave_settings);
+    replace('leave_rate_periods', state.leave_rate_periods);
+    remoteOtherAbsences = (state.other_absences ?? []).map((r) => ({ ...r, status: 'requested' }));
   }
   // 5-3a: 휴가 일수·상점 (서버에 03_leave_merit.sql을 아직 실행하지 않았으면 없다 → 가상 데이터를 그대로 쓴다)
-  if (state.leave_grants) mockDb.leave_grants.splice(0, mockDb.leave_grants.length, ...state.leave_grants);
-  if (state.merit_points) mockDb.merit_points.splice(0, mockDb.merit_points.length, ...state.merit_points);
+  if (state.leave_grants) replace('leave_grants', state.leave_grants);
+  if (state.merit_points) replace('merit_points', state.merit_points);
   remoteSoldierCount = state.active_soldiers;
   sessionUserId = state.me.id;
   return true;
@@ -1043,6 +1053,18 @@ export function applyLeave(input, now = Date.now()) {
     }
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  // 서버 모드: 정원 확인과 저장을 서버가 한 번에 한다 (동시에 신청해도 정원을 넘지 않게)
+  if (REMOTE) {
+    const days = Object.fromEntries(items.map((item) => [item.leave_type, item.days]));
+    return remoteWrite('apply_leave', {
+      p_token: token,
+      p_start_date: start,
+      p_end_date: end,
+      p_annual: days.annual,
+      p_reward: days.reward,
+      p_consolation: days.consolation,
+    });
+  }
 
   // 달력에 보일 일정(본인에게만 보임)과 신청 기록, 종류별 사용 일수를 함께 만든다.
   const event = {
@@ -1083,6 +1105,7 @@ export function cancelLeaveRequest(id, now = Date.now()) {
   const request = mockDb.leave_requests.find((r) => r.id === id && r.user_id === user.id);
   if (!request) return { ok: false, reason: 'not_found' };
   if (request.status !== 'requested') return { ok: false, reason: 'already_cancelled' };
+  if (REMOTE) return remoteWrite('cancel_leave_request', { p_token: token, p_id: id });
   request.status = 'cancelled';
   request.cancelled_at = new Date(now).toISOString();
   const eventIndex = mockDb.events.findIndex((e) => e.id === request.event_id);
@@ -1126,7 +1149,7 @@ function capacityOn(rateKind, iso) {
 
 // 그 날짜에 걸친 신청. rateKind가 total이면 휴가·외박·외출 모두, leave면 휴가만.
 function requestsOn(rateKind, iso) {
-  return mockDb.leave_requests.filter(
+  return [...mockDb.leave_requests, ...remoteOtherAbsences].filter(
     (r) =>
       (rateKind === 'total' ? REQUEST_KINDS.includes(r.kind) : r.kind === 'leave') &&
       r.status === 'requested' &&
@@ -1234,6 +1257,7 @@ export function setDefaultRates(input, now = Date.now()) {
     errors.leave = `휴가는 총 출타에 포함되므로 휴가 비율(${next.leave}%)이 총 출타 비율(${next.total}%)보다 클 수 없습니다.`;
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteWrite('set_default_rates', { p_token: token, p_total: next.total, p_leave: next.leave });
 
   const changed = RATE_KINDS.filter((kind) => next[kind] !== defaultRate(kind));
   changed.forEach((kind) => {
@@ -1256,6 +1280,9 @@ export function addRatePeriod(input, now = Date.now()) {
   else if (!isDate(end) || end < input.start_date) errors.end_date = '끝나는 날짜는 시작 날짜와 같거나 뒤여야 합니다.';
   if (rate === null) errors.rate = '출타율은 0~100 사이의 정수로 입력하세요.';
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) {
+    return remoteWrite('add_rate_period', { p_token: token, p_kind: input.kind, p_start_date: input.start_date, p_end_date: end, p_rate: rate });
+  }
   const row = {
     id: nextId('p', mockDb.leave_rate_periods),
     kind: input.kind,
@@ -1275,6 +1302,7 @@ export function deleteRatePeriod(id, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
   const index = mockDb.leave_rate_periods.findIndex((p) => p.id === id);
   if (index < 0) return { ok: false, reason: 'not_found' };
+  if (REMOTE) return remoteWrite('delete_rate_period', { p_token: token, p_id: id });
   mockDb.leave_rate_periods.splice(index, 1);
   writeAuditLog(officer, 'delete_rate_period', 'leave_rate_periods', id, now);
   return { ok: true };
@@ -1347,8 +1375,8 @@ export function getMyAbsenceQuota(iso) {
     },
     month: {
       label: mo.label,
-      // 그 달의 외박 + 주말 외출
-      weekend: mine.filter((r) => (r.kind === 'overnight' || isWeekend(r.start_date)) && inRange(r, mo)).length,
+      // 그 달의 외박 + 주말 외출 (주말에 시작한 휴가는 세지 않는다)
+      weekend: mine.filter((r) => (r.kind === 'overnight' || (r.kind === 'outing' && isWeekend(r.start_date))) && inRange(r, mo)).length,
       weekdayOuting: mine.filter((r) => r.kind === 'outing' && !isWeekend(r.start_date) && inRange(r, mo)).length,
     },
     limits: {
@@ -1404,6 +1432,7 @@ export function applyAbsence(input, now = Date.now()) {
     if (left < 1) errors.use_pass = `남은 포상 ${ABSENCE_LABELS[kind]}이 없습니다.`;
   }
   if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  if (REMOTE) return remoteWrite('apply_absence', { p_token: token, p_kind: kind, p_start_date: start, p_use_pass: usePass });
 
   const event = {
     id: nextId('e', mockDb.events),
@@ -2426,6 +2455,11 @@ function linkedRatePeriods(eventId) {
   return mockDb.leave_rate_periods.filter((p) => p.source_event_id === eventId);
 }
 
+function removeLinkedPeriods(eventId) {
+  const keep = mockDb.leave_rate_periods.filter((p) => p.source_event_id !== eventId);
+  mockDb.leave_rate_periods.splice(0, mockDb.leave_rate_periods.length, ...keep);
+}
+
 // 간부만. 결과: { linked: { start_date, end_date } 또는 null, absences(그 기간에 이미 신청된 출타 수) }
 export function getTrainingRateInfo(eventId, start = null, end = null) {
   if (!requireOfficer()) return null;
@@ -2445,7 +2479,8 @@ export function setTrainingRate(eventId, now = Date.now()) {
   if (!officer) return { ok: false, reason: 'forbidden' };
   const event = mockDb.events.find((e) => e.id === eventId && e.type === 'unit' && e.unit_category === 'training');
   if (!event) return { ok: false, reason: 'not_found' };
-  mockDb.leave_rate_periods = mockDb.leave_rate_periods.filter((p) => p.source_event_id !== eventId);
+  if (REMOTE) return remoteWrite('set_training_rate', { p_token: token, p_event_id: eventId });
+  removeLinkedPeriods(eventId);
   RATE_KINDS.forEach((kind) => {
     mockDb.leave_rate_periods.push({
       id: nextId('p', mockDb.leave_rate_periods),
@@ -2467,7 +2502,8 @@ export function removeTrainingRate(eventId, now = Date.now()) {
   const officer = requireOfficer();
   if (!officer) return { ok: false, reason: 'forbidden' };
   if (linkedRatePeriods(eventId).length === 0) return { ok: false, reason: 'not_found' };
-  mockDb.leave_rate_periods = mockDb.leave_rate_periods.filter((p) => p.source_event_id !== eventId);
+  if (REMOTE) return remoteWrite('remove_training_rate', { p_token: token, p_event_id: eventId });
+  removeLinkedPeriods(eventId);
   writeAuditLog(officer, 'remove_training_rate', 'leave_rate_periods', eventId, now);
   return { ok: true };
 }

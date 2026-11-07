@@ -761,12 +761,14 @@ function applyParts(redraw, user, summary) {
     redraw('.apply-title');
   });
   form.append(submit, reset);
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     updateSum();
-    const result = applyLeave({ start_date: st.start, end_date: st.end, items: { ...st.alloc } });
+    submit.disabled = true;
+    const result = await applyLeave({ start_date: st.start, end_date: st.end, items: { ...st.alloc } });
+    submit.disabled = false;
     if (!result.ok) {
-      error.textContent = result.errors ? Object.values(result.errors).join(' ') : '신청할 수 없습니다.';
+      error.textContent = result.errors ? Object.values(result.errors).join(' ') : result.reason === 'network' ? NETWORK_ERROR : '신청할 수 없습니다.';
       error.hidden = false;
       return;
     }
@@ -844,11 +846,11 @@ function absenceFormParts(redraw, st) {
     redraw('.apply-title');
   });
   form.append(submit, reset);
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const result = applyAbsence({ kind: st.kind, start_date: st.start, end_date: st.end, use_pass: pass.checked });
+    const result = await applyAbsence({ kind: st.kind, start_date: st.start, end_date: st.end, use_pass: pass.checked });
     if (!result.ok) {
-      error.textContent = result.errors ? Object.values(result.errors).join(' ') : '신청할 수 없습니다.';
+      error.textContent = result.errors ? Object.values(result.errors).join(' ') : result.reason === 'network' ? NETWORK_ERROR : '신청할 수 없습니다.';
       error.hidden = false;
       return;
     }
@@ -896,10 +898,14 @@ function myRequestParts(redraw) {
     if (active) {
       const actions = el('span', 'grant-actions');
       actions.append(
-        button('small-button danger', '취소', null, () => {
+        button('small-button danger', '취소', null, async () => {
           const back = r.kind === 'leave' ? ' 일수가 되돌아옵니다.' : r.reward_pass ? ` 포상 ${kindLabel} 1회가 되돌아옵니다.` : '';
           if (!window.confirm(`${when} ${kindLabel} 신청을 취소할까요?${back}`)) return;
-          cancelLeaveRequest(r.id);
+          const result = await cancelLeaveRequest(r.id);
+          if (result.reason === 'network') {
+            window.alert(NETWORK_ERROR);
+            return;
+          }
           applyState.message =
             r.kind === 'leave'
               ? '휴가 신청을 취소했습니다. 일수가 되돌아왔습니다.'
@@ -976,14 +982,16 @@ function quotaParts(redraw, user) {
   save.type = 'submit';
   save.dataset.action = 'save-rates';
   form.append(error, save);
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const result = setDefaultRates({ total: form.elements.total.value, leave: form.elements.leave.value });
+    const result = await setDefaultRates({ total: form.elements.total.value, leave: form.elements.leave.value });
     if (!result.ok) {
       const entries = Object.entries(result.errors ?? {});
       error.textContent = entries.length
         ? entries.map(([kind, message]) => `${RATE_LABELS[kind]}: ${message}`).join(' ')
-        : '저장할 수 없습니다.';
+        : result.reason === 'network'
+          ? NETWORK_ERROR
+          : '저장할 수 없습니다.';
       error.hidden = false;
       form.elements[entries[0]?.[0] ?? 'total'].focus();
       return;
@@ -1014,9 +1022,10 @@ function quotaParts(redraw, user) {
       );
       const actions = el('span', 'grant-actions');
       actions.append(
-        button('small-button danger', '삭제', null, () => {
+        button('small-button danger', '삭제', null, async () => {
           if (!window.confirm(`${RATE_LABELS[p.kind]} ${p.rate}% (${shortDay(p.start_date)} ~ ${shortDay(p.end_date)}) 기간을 지울까요?`)) return;
-          deleteRatePeriod(p.id);
+          const result = await deleteRatePeriod(p.id);
+          if (result.reason === 'network') window.alert(NETWORK_ERROR);
           redraw('[data-action="add-period"]');
         }),
       );
