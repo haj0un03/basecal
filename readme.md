@@ -27,10 +27,11 @@
 
 ```
 cd "프로젝트 폴더 경로"
-python -m http.server 8000
+python tools/serve.py
 ```
 
-브라우저에서 `http://localhost:8000`을 엽니다. 끝낼 때는 터미널에서 `Ctrl + C`를 누릅니다.
+브라우저에서 `http://localhost:8000`을 엽니다(`https`가 아니라 `http`). 끝낼 때는 터미널에서 `Ctrl + C`를 누릅니다.
+`tools/serve.py`는 `python -m http.server 8000`과 같지만, 코드를 고친 뒤 브라우저가 예전 파일을 쓰지 않게 해 줍니다.
 
 연습용 가상 인원은 이름과 개인 코드로 들어옵니다 (Phase 0~4 전용). 자주 쓰는 인원은 다음과 같고, 전체 목록은 들어오기 화면 아래 "연습용 가상 인원 코드 보기"에 있습니다.
 
@@ -62,7 +63,7 @@ Phase 5부터는 Supabase 주소와 키를 환경 변수 파일에 넣어야 합
 python tools/make_config.py
 ```
 
-4. 평소처럼 `python -m http.server 8000`으로 열면 Supabase에 저장됩니다. `js/config.js`를 지우면 다시 가상 데이터로 동작합니다.
+4. 평소처럼 `python tools/serve.py`로 열면 Supabase에 저장됩니다. `js/config.js`를 지우면 다시 가상 데이터로 동작합니다.
 
 Supabase 모드에서는 들어오기 화면에 연습용 코드 목록이 보이지 않습니다. 위 표의 코드를 그대로 쓰면 됩니다.
 
