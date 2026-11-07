@@ -18,7 +18,8 @@ try:
 except FileNotFoundError:
     sys.exit('.env 파일이 없습니다. .env.example을 복사해 .env를 만들고 값을 채우세요.')
 
-url = values.get('SUPABASE_URL', '')
+# Supabase 화면에 따라 주소 끝에 /rest/v1/이 붙어 있을 수 있다. 앱이 직접 붙이므로 뗀다.
+url = re.sub(r'(/rest/v1)?/*$', '', values.get('SUPABASE_URL', ''))
 key = values.get('SUPABASE_ANON_KEY', '')
 if not url or not key:
     sys.exit('.env에 SUPABASE_URL과 SUPABASE_ANON_KEY를 모두 채우세요.')
