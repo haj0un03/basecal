@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<script type="module">
+// 11/7 고침: 주말에 시작한 휴가는 "한 달에 외박·주말 외출 1개"에 세지 않는다
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+const dow = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getDay(); };
+try {
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, mockAuth.find((a) => a.user_id === id).code); };
+  as('u02');
+  const win = d.getApplyWindow();
+  // 같은 달 안에서: 토요일에 시작하는 휴가(토~일) + 다른 주 토요일 외출
+  const sats = [];
+  for (let x = addDays(win.start, 1); x <= win.end; x = addDays(x, 1)) if (dow(x) === 6) sats.push(x);
+  const pair = sats.find((s) => sats.some((t) => t !== s && t.slice(0, 7) === s.slice(0, 7) && !d.getDayAvailability('outing', t, t)[0].full) && !d.getDayAvailability('leave', s, addDays(s, 1)).some((x) => x.full));
+  const other = sats.find((t) => t !== pair && t.slice(0, 7) === pair?.slice(0, 7));
+  check('점검 준비: 같은 달 토요일 두 개', !!pair && !!other, `${pair} ${other}`);
+  let r = d.applyLeave({ start_date: pair, end_date: addDays(pair, 1), items: { annual: 2 } });
+  check('토요일에 시작하는 휴가 신청', r.ok, JSON.stringify(r));
+  check('★ 휴가는 그 달 외박·주말 외출 수에 안 들어감', d.getMyAbsenceQuota(other).month.weekend === 0);
+  r = d.applyAbsence({ kind: 'outing', start_date: other });
+  check('★ 같은 달 주말 외출 신청 가능', r.ok, JSON.stringify(r));
+  check('주말 외출은 셈', d.getMyAbsenceQuota(other).month.weekend === 1);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

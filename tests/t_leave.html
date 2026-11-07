@@ -1,0 +1,120 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:1400px;border:0"></iframe>
+<script type="module">
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  // ── 데이터 계층 ──
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const sum = () => Object.fromEntries(d.getMyLeaveSummary().map((x) => [x.leave_type, x]));
+
+  check('들어오기 전 현황 없음', d.getMyLeaveSummary().length === 0);
+  d.signIn('김하늘', codeOf('u01'));
+  let s = sum();
+  check('종류 3개 순서', d.getMyLeaveSummary().map((x) => x.leave_type).join() === 'annual,reward,consolation');
+  check('연가 24 받음, 24 남음', s.annual.granted === 24 && s.annual.used === 0 && s.annual.remaining === 24);
+  check('포상 3 (승인된 것만)', s.reward.granted === 3 && s.reward.remaining === 3);
+  check('위로: 대기 중 2일은 아직 안 들어감', s.consolation.granted === 0 && s.consolation.remaining === 0);
+  check('병사는 승인 대기 목록 못 봄', d.getPendingLeaveGrants().length === 0);
+  check('병사는 승인 불가', d.decideLeaveGrant('g21', 'approve').reason === 'forbidden');
+  let e = d.requestLeaveGrant({ leave_type: 'x', days: '0', reason: ' ' });
+  check('요청 입력 오류: 종류·일수·사유', e.reason === 'invalid' && e.errors.leave_type && e.errors.days && e.errors.reason, JSON.stringify(e.errors));
+  check('연가는 요청 불가', !!d.requestLeaveGrant({ leave_type: 'annual', days: '1', reason: 'a' }).errors?.leave_type);
+  check('일수 31 거부', !!d.requestLeaveGrant({ leave_type: 'reward', days: '31', reason: 'a' }).errors?.days);
+  check('일수 1.5 거부', !!d.requestLeaveGrant({ leave_type: 'reward', days: '1.5', reason: 'a' }).errors?.days);
+  check('일수 글자 거부', !!d.requestLeaveGrant({ leave_type: 'reward', days: 'abc', reason: 'a' }).errors?.days);
+  check('사유 101자 거부', !!d.requestLeaveGrant({ leave_type: 'reward', days: '1', reason: '가'.repeat(101) }).errors?.reason);
+  let r = d.requestLeaveGrant({ leave_type: 'reward', days: '2', reason: ' 사격 만발 ' }, Date.parse('2026-10-23T01:00:00Z'));
+  check('요청 성공(대기)', r.ok && r.grant.status === 'pending' && r.grant.days === 2 && r.grant.reason === '사격 만발' && r.grant.user_id === 'u01');
+  const newId = r.grant.id;
+  check('요청만으로는 남은 일수 그대로', sum().reward.remaining === 3);
+  check('내 요청 목록: 최근 것 먼저', d.getMyLeaveGrants()[0].id === newId);
+  // 쓴 일수 계산 (휴가 신청은 3-2에서 만들지만 계산식은 지금 확인)
+  mockDb.leave_requests.push({ id: 'r90', user_id: 'u01', kind: 'leave', status: 'requested' }, { id: 'r91', user_id: 'u01', kind: 'leave', status: 'cancelled' }, { id: 'r92', user_id: 'u01', kind: 'overnight', status: 'requested' }, { id: 'r93', user_id: 'u02', kind: 'leave', status: 'requested' });
+  mockDb.leave_request_items.push({ request_id: 'r90', leave_type: 'annual', days: 3 }, { request_id: 'r90', leave_type: 'reward', days: 1 }, { request_id: 'r91', leave_type: 'annual', days: 5 }, { request_id: 'r92', leave_type: 'annual', days: 2 }, { request_id: 'r93', leave_type: 'annual', days: 4 });
+  s = sum();
+  check('쓴 일수 = 신청된 휴가만 (취소·외박·남의 것 제외)', s.annual.used === 3 && s.annual.remaining === 21 && s.reward.used === 1 && s.reward.remaining === 2, JSON.stringify(s));
+  mockDb.leave_requests.splice(-4); mockDb.leave_request_items.splice(-5);
+  d.signOut();
+
+  d.signIn('백지훈', codeOf('o01'));
+  check('간부는 현황 없음(휴가 신청 대상 아님)', d.getMyLeaveSummary().length === 0);
+  check('간부는 일수 요청 불가', d.requestLeaveGrant({ leave_type: 'reward', days: '1', reason: 'a' }).reason === 'forbidden');
+  const pending = d.getPendingLeaveGrants();
+  check('대기 목록 3건, 먼저 요청한 것부터', pending.length === 3 && pending.map((g) => g.id).join() === `g22,g23,${newId}`, pending.map((g) => g.id).join());
+  check('대기 목록에 이름·보직', pending[0].name === '김하늘' && pending[0].position === '소총수');
+  const logs = mockDb.audit_logs.length;
+  r = d.decideLeaveGrant('g22', 'approve', Date.parse('2026-10-23T02:00:00Z'));
+  check('승인', r.ok && r.grant.status === 'approved' && r.grant.decided_by === 'o01' && r.grant.decided_at === '2026-10-23T02:00:00.000Z');
+  check('승인 기록', mockDb.audit_logs.length === logs + 1 && mockDb.audit_logs.at(-1).action === 'approve_leave_grant' && mockDb.audit_logs.at(-1).target_id === 'g22');
+  check('이미 처리한 요청은 다시 못 함', d.decideLeaveGrant('g22', 'reject').reason === 'already_decided');
+  r = d.decideLeaveGrant(newId, 'reject');
+  check('반려', r.ok && r.grant.status === 'rejected' && mockDb.audit_logs.at(-1).action === 'reject_leave_grant');
+  check('잘못된 결정 값', d.decideLeaveGrant('g23', 'maybe').reason === 'invalid');
+  check('없는 요청', d.decideLeaveGrant('g99', 'approve').reason === 'not_found');
+  d.signOut();
+  d.signIn('김하늘', codeOf('u01'));
+  s = sum();
+  check('승인된 위로 2일 반영, 반려된 포상 2일은 안 들어감', s.consolation.granted === 2 && s.consolation.remaining === 2 && s.reward.granted === 3, JSON.stringify(s));
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const loadAs = (id) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', JSON.stringify(id)); f.onload = () => setTimeout(res, 300); f.src = `index.html?l=${id}${Math.random()}#apply`; });
+  await loadAs('u01');
+  let doc = f.contentDocument, w = f.contentWindow;
+  let $ = (q) => doc.querySelector(q);
+  let $$ = (q) => [...doc.querySelectorAll(q)];
+  check('신청 탭은 휴가 영역부터', $$('.view h2').map((h) => h.textContent).join() === '휴가' && $('.subtab[aria-current="page"]')?.textContent === '휴가');
+  check('정식 승인 안내 항상 보임(병사)', $('.leave-notice')?.textContent.includes('정식 휴가 승인은 기존 부대 절차대로'));
+  const cards = $$('.leave-card');
+  check('카드 4장: 연가·포상휴가·위로휴가·상점', cards.map((c) => c.querySelector('.leave-card-type').textContent).join() === '연가,포상휴가,위로휴가,상점');
+  check('연가 카드: 24일, 받은 24 · 쓴 0', cards[0].querySelector('.leave-card-remaining').textContent === '24일' && cards[0].querySelector('.leave-card-detail').textContent === '받은 24 · 쓴 0');
+  check('포상 3일, 위로 0일', cards[1].querySelector('.leave-card-remaining').textContent === '3일' && cards[2].querySelector('.leave-card-remaining').textContent === '0일');
+  check('휴가 신청 상자', !!$('.apply-box'));
+  const items = () => $$('.leave-section .grant-list:not(.merit-list) .grant-item').map((x) => x.querySelector('.status-badge').textContent + ':' + x.querySelector('.grant-title').textContent);
+  check('내 요청 목록에 대기·승인 표시', items().includes('대기:위로휴가 2일') && items().includes('승인:포상휴가 3일') && items().includes('승인:연가 24일'), items().join());
+  $('[data-action="request-grant"]').click(); await wait(30);
+  let fm = $('#leave-dialog form');
+  check('요청 창 열림, 기본 포상', $('#leave-dialog').open && fm.elements.leave_type.value === 'reward');
+  check('요청 창에 연가 없음(포상·위로만)', [...fm.querySelectorAll('input[name="leave_type"]')].map((i) => i.value).join() === 'reward,consolation');
+  check('일수 칸에 초점', doc.activeElement === fm.elements.days);
+  fm.requestSubmit(); await wait(30);
+  check('빈칸이면 항목별 안내', !$('[data-error-for="days"]').hidden && !$('[data-error-for="reason"]').hidden && $('#leave-dialog').open);
+  fm.elements.days.value = '2'; fm.elements.reason.value = '사격 만발'; fm.requestSubmit(); await wait(50);
+  check('요청하면 창 닫히고 목록 맨 위에 대기', !$('#leave-dialog').open && items()[0] === '대기:포상휴가 2일');
+  check('요청만으로는 카드 그대로', $$('.leave-card')[1].querySelector('.leave-card-remaining').textContent === '3일');
+  check('간부 전용 영역 없음', !$('.officer-only') || !$('.leave-section .officer-only'));
+  check('360px 가로 넘침 없음(병사)', doc.documentElement.scrollWidth <= 360, doc.documentElement.scrollWidth);
+
+  await loadAs('o01');
+  doc = f.contentDocument; w = f.contentWindow;
+  $ = (q) => doc.querySelector(q); $$ = (q) => [...doc.querySelectorAll(q)];
+  check('정식 승인 안내 항상 보임(간부)', $('.leave-notice')?.textContent.includes('정식 휴가 승인은'));
+  check('간부에겐 카드·요청 버튼 없음', !$('.leave-card') && !$('[data-action="request-grant"]'));
+  check('대기 2건 표시', $('.leave-sub-head h3').textContent === '받은 휴가 일수 승인 대기 2건', $('.leave-sub-head h3').textContent);
+  const row = (name) => $$('.leave-section .grant-list:not(.merit-list) .grant-item').find((x) => x.querySelector('.grant-title').textContent.startsWith(name));
+  check('대기 항목: 이름·종류·일수, 보직·사유', row('김하늘').querySelector('.grant-title').textContent === '김하늘 · 위로휴가 2일' && row('김하늘').querySelector('.grant-meta').textContent.startsWith('소총수 · 장기 파견 위로'));
+  row('김하늘').querySelector('.approve').click(); await wait(40);
+  check('승인하면 목록에서 빠지고 1건', $('.leave-sub-head h3').textContent === '받은 휴가 일수 승인 대기 1건' && !row('김하늘'));
+  w.confirm = () => false;
+  row('이바다').querySelector('.danger').click(); await wait(30);
+  check('반려 취소하면 그대로', !!row('이바다'));
+  w.confirm = () => true;
+  row('이바다').querySelector('.danger').click(); await wait(40);
+  check('반려하면 대기 없음', $('.leave-sub-head h3').textContent === '받은 휴가 일수 승인 대기 0건' && $('.leave-section .cal-empty')?.textContent === '대기 중인 요청이 없습니다.');
+  check('간부: 출타율 설정 보임', !!$('.rate-form') && !!$('[data-action="add-period"]'));
+  // 같은 화면에서 병사로 바꿔 승인 결과 확인
+  $('#user-button').click(); await wait(20);
+  [...doc.querySelectorAll('.user-menu-item')].find((b) => b.textContent === '로그아웃').click(); await wait(50);
+  fm = $('.login-form'); fm.elements.name.value = '김하늘'; fm.elements.code.value = (await import('./js/mock-data.js')).mockAuth.find((a) => a.user_id === 'u01').code; fm.requestSubmit(); await wait(80);
+  location.hash; f.contentWindow.location.hash = '#apply'; await wait(80);
+  check('승인된 위로휴가 2일이 병사 카드에 반영', $$('.leave-card')[2]?.querySelector('.leave-card-remaining').textContent === '2일', $$('.leave-card')[2]?.textContent);
+  check('병사 요청 목록에서도 승인', $$('.leave-section .grant-list:not(.merit-list) .grant-item').some((x) => x.querySelector('.status-badge').textContent === '승인' && x.querySelector('.grant-title').textContent === '위로휴가 2일'));
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

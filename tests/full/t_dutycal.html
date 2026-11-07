@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:1400px;border:0"></iframe>
+<script type="module">
+// 병사 "근무 교대" 탭의 내 근무 달력 (2026-11-07)
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+try {
+  // 기대값은 데이터 계층에서 (화면과 같은 가상 데이터)
+  localStorage.clear();
+  const data = await import('./js/data.js');
+  const { mockAuth } = await import('./js/mock-data.js');
+  data.signIn('김하늘', mockAuth.find((a) => a.user_id === 'u01').code);
+  const win = data.getApplyWindow();
+  const expected = data.getMyDuties(win.start, win.end);
+  data.signOut();
+
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?c=${Math.random()}${hash}`; });
+  const $ = (q) => f.contentDocument.querySelector(q);
+  const $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  await open('u01', '#apply/duty');
+  const [y, m] = win.start.split('-').map(Number);
+  check('★ 이번 달 달력이 보임', $('.duty-cal-box .apply-month').textContent === `${y}년 ${m}월`);
+  check('요일 줄', $$('.duty-cal .cal-weekday').map((x) => x.textContent).join('') === '일월화수목금토');
+  check('달의 날짜 수만큼 칸', $$('.duty-cal-day').length === new Date(y, m, 0).getDate());
+  check('1일 앞 빈칸', $$('.duty-cal-blank').length === new Date(y, m - 1, 1).getDay());
+  const thisMonth = expected.filter((x) => x.date.slice(0, 7) === win.start.slice(0, 7));
+  const shown = $$('.duty-cal-day.has-duty').map((x) => x.dataset.date);
+  check('★ 근무 있는 날만 "근무" 표시 (이번 달)', shown.join() === [...new Set(thisMonth.map((x) => x.date))].join(), shown.join());
+  const first = thisMonth[0];
+  const c = $(`.duty-cal-day[data-date="${first.date}"]`);
+  check('★ 칸에 "근무"와 시간대 글자 (색만으로 구분하지 않음)', c.querySelector('.duty-cal-tag').textContent === '근무' && c.querySelector('.duty-cal-slot').textContent === first.label);
+  check('읽어주기: 근무지·시간대', c.getAttribute('aria-label').includes(`${first.post_name} ${first.label}`));
+  const yest = addDays(win.start, -1);
+  if (yest.slice(0, 7) === win.start.slice(0, 7)) check('지난 날은 누를 수 없음', $(`.duty-cal-day[data-date="${yest}"]`).disabled);
+  check('오늘 표시', $(`.duty-cal-day[data-date="${win.start}"]`).classList.contains('today'));
+  check('처음 안내: 근무 횟수', $('.duty-cal-detail').textContent.includes(`근무 ${expected.length}번`), $('.duty-cal-detail').textContent);
+  // 날짜 누르기
+  $(`.duty-cal-day[data-date="${first.date}"]`).click(); await wait(40);
+  check('★ 누르면 그날 근무 내용', $('.duty-cal-detail').textContent.includes(`${first.post_name} ${first.label}`));
+  check('누른 날 표시와 초점', $(`.duty-cal-day[data-date="${first.date}"]`).classList.contains('selected') && f.contentDocument.activeElement === $(`.duty-cal-day[data-date="${first.date}"]`));
+  const [fm, fd] = first.date.slice(5).split('-').map(Number);
+  check('★ 근무표도 그날로', $('.duty-date').textContent.startsWith(`${fm}/${fd}`) && $$('.duty-slot.mine').length >= 1);
+  const free = $$('.duty-cal-day:not(.has-duty):not(:disabled)')[0];
+  free.click(); await wait(40);
+  check('근무 없는 날은 "근무 없음"', $('.duty-cal-detail').textContent.includes('근무 없음'));
+  // 다음 달
+  check('이전 달 버튼은 막힘', $('[data-action="duty-cal-prev"]').disabled);
+  $('[data-action="duty-cal-next"]').click(); await wait(40);
+  const [ny, nm] = win.end.split('-').map(Number);
+  check('★ 다음 달로', $('.duty-cal-box .apply-month').textContent === `${ny}년 ${nm}월` && $('[data-action="duty-cal-next"]').disabled && f.contentDocument.activeElement === $('[data-action="duty-cal-prev"]'));
+  const nextShown = $$('.duty-cal-day.has-duty').map((x) => x.dataset.date);
+  check('다음 달 근무 (한 달 넘는 날은 없음)', nextShown.join() === [...new Set(expected.filter((x) => x.date.slice(0, 7) === win.end.slice(0, 7)).map((x) => x.date))].join() && nextShown.every((x) => x <= win.end));
+  check('한 달 넘는 날은 누를 수 없음', $$('.duty-cal-day').filter((x) => x.dataset.date > win.end).every((x) => x.disabled));
+  check('360px 가로 넘침 없음', f.contentDocument.documentElement.scrollWidth <= 360);
+  // 간부에게는 달력 없음
+  await open('o01', '#apply/duty');
+  check('간부: 내 근무 달력 없음, 탭 이름 "근무"', !$('.duty-cal') && $('.subtab[aria-current="page"]').textContent === '근무');
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

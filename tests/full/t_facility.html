@@ -1,0 +1,253 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2400px;border:0"></iframe>
+<script type="module">
+// Phase 4 시설 예약 (2026-11-07): 7곳, 09–21시, 오늘부터 2주, 하루 1건, 1~2시간, 선착순, 승인·반려, 출타 날 막기, 근무 안내, 시설 막기
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  // 시각을 고정한다: 2026-11-07(토) 12:30
+  const NOW = new Date(2026, 10, 7, 12, 30).getTime();
+  const req = (x) => d.requestReservation(x, NOW);
+  const day = (date, id) => d.getFacilityDay(date, NOW).find((f) => f.id === id);
+
+  check('들어오기 전엔 시설 없음', d.getFacilities().length === 0);
+  as('u01');
+  const fs = d.getFacilities();
+  check('★ 시설 7곳 (이름·건물)', fs.map((f) => f.label).join() === '풋살장(청룡관),풋살장(주작관),테니스장(주작관),대운동장(주작관),풋살장(이정란관),테니스장(이정란관),실내체육관(이정란관)');
+  check('★ 모두 09:00~21:00, 1시간 단위', fs.every((f) => f.open_time === '09:00' && f.close_time === '21:00' && f.slot_minutes === 60));
+  check('약도 위치: 1~4 윗줄, 5~7 아랫줄, 실내체육관 두 칸', fs.slice(0, 4).every((f, i) => f.map_row === 1 && f.map_col === i + 1) && fs[6].map_row === 2 && fs[6].map_col === 3 && fs[6].map_span === 2);
+  const win = d.getReservationWindow(NOW);
+  check('★ 예약 기간: 오늘부터 2주 뒤 같은 날', win.start === '2026-11-07' && win.end === '2026-11-21');
+  const f01 = day('2026-11-10', 'f01');
+  check('하루 12칸 (09~21)', f01.slots.length === 12 && f01.slots[0].start_time === '09:00' && f01.slots[11].end_time === '21:00');
+  check('★ 승인된 시간은 "예약됨"+이름, 대기는 "신청 중"', f01.slots[1].state === 'approved' && f01.slots[1].user_name === '박가온' && f01.slots[5].state === 'pending');
+  check('★ 빈 시간 수 (12 - 2 - 1 = 9)', f01.free_count === 9);
+  check('★ 하루 종일 막힌 시설은 사용 불가', day('2026-11-11', 'f04').blocked_all && day('2026-11-11', 'f04').free_count === 0 && day('2026-11-11', 'f04').block_reason === '잔디 보수');
+  const today = day('2026-11-07', 'f02');
+  check('★ 오늘 이미 시작한 시간대는 "지남"', today.slots.filter((s) => s.state === 'past').map((s) => s.start_time).join() === '09:00,10:00,11:00,12:00' && today.free_count === 8);
+
+  // ── 신청 입력 확인 ──
+  let r = req({ facility_id: 'f02', date: '2026-11-22', start_time: '10:00', hours: 1 });
+  check('★ 2주 넘는 날은 막힘', !r.ok && r.errors.time.includes('2주'));
+  r = req({ facility_id: 'f02', date: '2026-11-06', start_time: '10:00', hours: 1 });
+  check('지난 날은 막힘', !r.ok && r.errors.time.includes('2주'));
+  r = req({ facility_id: 'f02', date: '2026-11-07', start_time: '12:00', hours: 1 });
+  check('★ 오늘 이미 시작한 시간은 막힘', !r.ok && r.errors.time.includes('이미 시작한'));
+  r = req({ facility_id: 'f02', date: '2026-11-09', start_time: '10:00', hours: 3 });
+  check('★ 3시간은 막힘 (최대 2시간)', !r.ok && r.errors.time.includes('2시간'));
+  r = req({ facility_id: 'f02', date: '2026-11-09', start_time: '20:00', hours: 2 });
+  check('운영 시간 넘으면 막힘', !r.ok && r.errors.time.includes('운영 시간'));
+  r = req({ facility_id: 'f02', date: '2026-11-09', start_time: '08:00', hours: 1 });
+  check('운영 시작 전 막힘', !r.ok && r.errors.time.includes('운영 시간'));
+  r = req({ facility_id: 'f02', date: '2026-11-09', start_time: '10:30', hours: 1 });
+  check('정시가 아니면 막힘', !r.ok && r.errors.time.includes('1시간 단위'));
+  r = req({ facility_id: 'f99', date: '2026-11-09', start_time: '10:00', hours: 1 });
+  check('없는 시설', !r.ok && r.reason === 'not_found');
+  r = req({ facility_id: 'f01', date: '2026-11-10', start_time: '11:00', hours: 2 });
+  check('★ 먼저 신청된 시간(승인)과 겹치면 막힘', !r.ok && r.errors.time.includes('이미 신청된'));
+  r = req({ facility_id: 'f01', date: '2026-11-10', start_time: '14:00', hours: 1 });
+  check('★ 대기 중인 시간도 막힘 (선착순)', !r.ok && r.errors.time.includes('이미 신청된'));
+  r = req({ facility_id: 'f04', date: '2026-11-11', start_time: '10:00', hours: 1 });
+  check('★ 막아 둔 시설은 신청 못 함', !r.ok && r.errors.time.includes('사용 불가') && r.errors.time.includes('잔디 보수'));
+
+  // ── 신청 → 하루 1건 → 취소 ──
+  const logs = mockDb.audit_logs.length;
+  r = req({ facility_id: 'f01', date: '2026-11-10', start_time: '16:00', hours: 2 });
+  check('★ 2시간 신청됨 (대기)', r.ok && r.reservation.status === 'pending' && r.reservation.start_time === '16:00' && r.reservation.end_time === '18:00' && r.reservation.hours === 2, JSON.stringify(r));
+  const v1 = r.reservation.id;
+  check('신청하는 순간 그 시간은 "내 신청", 빈 시간 줄어듦', day('2026-11-10', 'f01').slots[7].state === 'mine' && day('2026-11-10', 'f01').free_count === 7);
+  r = req({ facility_id: 'f02', date: '2026-11-10', start_time: '09:00', hours: 1 });
+  check('★ 같은 날 두 번째 예약은 막힘 (하루 1건)', !r.ok && r.errors.time.includes('하루에 1건') && r.errors.time.includes('풋살장(청룡관) 16:00~18:00'));
+  check('하루 정보: 이미 예약, 한도', d.getReservationDayInfo('2026-11-10', NOW).limit_reached && d.getReservationDayInfo('2026-11-10', NOW).mine[0].id === v1);
+  r = req({ facility_id: 'f02', date: '2026-11-09', start_time: '09:00', hours: 1 });
+  check('다른 날은 또 예약 가능', r.ok);
+  const v2 = r.reservation.id;
+  as('u02');
+  check('다른 사람에게 내 신청은 "신청 중"', day('2026-11-10', 'f01').slots[7].state === 'pending');
+  r = req({ facility_id: 'f01', date: '2026-11-10', start_time: '17:00', hours: 1 });
+  check('★ 다른 사람은 그 시간 신청 못 함', !r.ok && r.errors.time.includes('이미 신청된'));
+  r = d.cancelReservation(v1);
+  check('남의 예약은 취소 못 함', !r.ok && r.reason === 'forbidden');
+  as('u01');
+  r = d.cancelReservation(v1, NOW);
+  check('★ 신청자는 취소 가능', r.ok && day('2026-11-10', 'f01').free_count === 9);
+  r = d.cancelReservation(v1, NOW);
+  check('취소한 건 다시 취소 못 함', !r.ok && r.reason === 'already_decided');
+  as('u02');
+  r = req({ facility_id: 'f01', date: '2026-11-10', start_time: '17:00', hours: 1 });
+  check('★ 취소하면 그 시간 다시 열림', r.ok);
+  const v3 = r.reservation.id;
+
+  // ── 출타·근무 ──
+  as('u05');
+  r = req({ facility_id: 'f02', date: '2026-11-12', start_time: '10:00', hours: 1 });
+  check('★ 출타 중인 날은 예약 못 함', !r.ok && r.errors.time.includes('출타'));
+  check('하루 정보: 출타', d.getReservationDayInfo('2026-11-12', NOW).away === true);
+  as('u01');
+  const dutyDay = d.getMyDuties('2026-11-08', '2026-11-21')[0];
+  const info = d.getReservationDayInfo(dutyDay.date, NOW);
+  check('★ 근무 날은 안내만 (근무 내용)', info.duties.length === 1 && info.duties[0].startsWith('불침번') && !info.away);
+  r = req({ facility_id: 'f03', date: dutyDay.date, start_time: '10:00', hours: 1 });
+  check('근무 날도 예약은 됨', r.ok, JSON.stringify(r));
+  d.cancelReservation(r.reservation?.id, NOW);
+
+  // ── 간부 승인·반려 ──
+  r = d.decideReservation(v3, 'approve');
+  check('병사는 승인 못 함', !r.ok && r.reason === 'forbidden');
+  check('병사는 대기 목록 못 받음', d.getPendingReservations().length === 0);
+  as('o01');
+  const pend = d.getPendingReservations();
+  check('★ 간부 대기 목록: 신청 시각 순, 신청자 이름', pend.length >= 3 && pend.every((x, i) => i === 0 || pend[i - 1].requested_at <= x.requested_at) && pend.some((x) => x.id === v3 && x.user_name === '이바다'));
+  r = d.decideReservation(v3, 'approve', '', NOW);
+  check('★ 승인됨 + 기록', r.ok && mockDb.reservations.find((x) => x.id === v3).status === 'approved' && mockDb.audit_logs.at(-1).action === 'approve_reservation');
+  r = d.decideReservation(v3, 'reject', 'x', NOW);
+  check('처리된 건 다시 못 함', !r.ok && r.reason === 'already_decided');
+  as('u02');
+  check('★ 승인된 예약은 신청자 달력에 "시설"', d.getCalendarEvents('2026-11-10', '2026-11-10').some((e) => e.type === 'reservation' && e.title === '풋살장(청룡관) 17:00~18:00' && e.time === '17:00' && !e.editable));
+  as('u01');
+  check('남의 달력에는 안 보임', !d.getCalendarEvents('2026-11-10', '2026-11-10').some((e) => e.type === 'reservation'));
+  check('대기 중인 내 예약은 달력에 없음', !d.getCalendarEvents('2026-11-09', '2026-11-09').some((e) => e.type === 'reservation'));
+  as('o01');
+  r = d.decideReservation(v2, 'reject', ' ', NOW);
+  check('★ 반려 사유 없으면 막힘', !r.ok && r.errors.reject_reason === '반려 사유를 입력하세요.');
+  r = d.decideReservation(v2, 'reject', '그날 점검', NOW);
+  check('★ 반려됨 + 기록', r.ok && mockDb.audit_logs.at(-1).action === 'reject_reservation');
+  check('반려되면 그 시간 다시 열림', day('2026-11-09', 'f02').slots[0].state === 'free');
+  as('u01');
+  const mine = d.getMyReservations(NOW);
+  check('★ 내 예약: 반려 사유가 보임', mine.find((x) => x.id === v2).reject_reason === '그날 점검' && mine.find((x) => x.id === v2).status === 'rejected');
+  check('내 예약에 취소한 것도 남음', mine.some((x) => x.id === v1 && x.status === 'cancelled'));
+  // 간부도 예약할 수 있다
+  as('o01');
+  r = req({ facility_id: 'f06', date: '2026-11-14', start_time: '09:00', hours: 1 });
+  check('간부도 예약 신청 가능', r.ok);
+
+  // ── 시설 막기 ──
+  as('u01');
+  r = d.addFacilityBlock({ facility_id: 'f02', date: '2026-11-15', all_day: true, reason: '점검' }, NOW);
+  check('병사는 막기 못 함', !r.ok && r.reason === 'forbidden');
+  as('o01');
+  r = d.addFacilityBlock({ facility_id: 'f02', date: '2026-11-15', all_day: true, reason: '' }, NOW);
+  check('막기: 사유 없으면 막힘', !r.ok && !!r.errors.reason);
+  r = d.addFacilityBlock({ facility_id: 'f02', date: '2026-11-06', all_day: true, reason: '점검' }, NOW);
+  check('막기: 지난 날짜 막힘', !r.ok && !!r.errors.date);
+  r = d.addFacilityBlock({ facility_id: 'f02', date: '2026-11-15', all_day: false, start_time: '12:00', end_time: '10:00', reason: '점검' }, NOW);
+  check('막기: 끝 시간이 앞이면 막힘', !r.ok && !!r.errors.time);
+  r = d.addFacilityBlock({ facility_id: 'f01', date: '2026-11-10', all_day: false, start_time: '10:00', end_time: '11:00', reason: '행사' }, NOW);
+  check('★ 예약이 있는 시간은 막을 수 없음 (먼저 반려)', !r.ok && r.errors.time.includes('먼저 반려') && r.errors.time.includes('박가온'));
+  r = d.addFacilityBlock({ facility_id: 'f02', date: '2026-11-15', all_day: false, start_time: '13:00', end_time: '15:00', reason: '방역' }, NOW);
+  check('★ 시간만 막기', r.ok && r.block.time_label === '13:00~15:00');
+  const blk = r.block.id;
+  check('막은 시간은 "사용 불가", 나머지는 빈 시간', day('2026-11-15', 'f02').slots.filter((s) => s.state === 'blocked').map((s) => s.start_time).join() === '13:00,14:00' && day('2026-11-15', 'f02').free_count === 10);
+  check('막기 기록', mockDb.audit_logs.at(-1).action === 'add_facility_block');
+  r = d.addFacilityBlock({ facility_id: 'all', date: '2026-11-16', all_day: true, reason: '부대 행사' }, NOW);
+  check('★ 모든 시설 하루 종일 막기', r.ok && r.block.facility_label === '모든 시설' && d.getFacilityDay('2026-11-16', NOW).every((f) => f.blocked_all));
+  as('u01');
+  r = req({ facility_id: 'f02', date: '2026-11-15', start_time: '12:00', hours: 2 });
+  check('★ 막힌 시간과 걸치면 신청 못 함', !r.ok && r.errors.time.includes('방역'));
+  check('막기 목록은 모두 봄 (날짜순)', d.getFacilityBlocks(NOW).map((b) => b.date).join() === '2026-11-11,2026-11-15,2026-11-16');
+  as('o01');
+  r = d.deleteFacilityBlock(blk, NOW);
+  check('★ 막기 풀기', r.ok && day('2026-11-15', 'f02').free_count === 12 && mockDb.audit_logs.at(-1).action === 'delete_facility_block');
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?v=${Math.random()}${hash}`; });
+  const $ = (q) => f.contentDocument.querySelector(q);
+  const $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  await open('u01', '#apply/facility');
+  const fd = await f.contentWindow.Function('return import("./js/data.js")')();
+  const rw = fd.getReservationWindow();
+  const addDays = (iso, n) => { const [y, m, dd] = iso.split('-').map(Number); const x = new Date(y, m - 1, dd + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  check('★ 시설 탭: 1단계 날짜 달력부터', !!$('.fac-cal') && $('.fac-step').textContent.startsWith('1.') && !$('.fac-map'));
+  check('2주 밖 날짜는 누를 수 없음', $$('.fac-cal-day').filter((x) => x.dataset.date > rw.end || x.dataset.date < rw.start).every((x) => x.disabled));
+  // 근무·출타가 없는 날 고르기
+  const pickDay = (() => { for (let x = addDays(rw.start, 1); x <= rw.end; x = addDays(x, 1)) { const i = fd.getReservationDayInfo(x); if (!i.away && !i.duties.length && !i.mine.length && x.slice(0, 7) === rw.start.slice(0, 7)) return x; } })();
+  $(`.fac-cal-day[data-date="${pickDay}"]`).click(); await wait(40);
+  check('★ 날짜를 고르면 약도 (7칸)', $$('.fac-map .fac-cell').length === 7 && $('.fac-cal-day.selected').dataset.date === pickDay);
+  check('약도: 이름·건물·빈 시간 글자', $('.fac-cell[data-facility="f07"]').textContent.includes('실내체육관') && $('.fac-cell[data-facility="f07"]').textContent.includes('이정란관') && $('.fac-cell[data-facility="f07"] .fac-cell-free').textContent.startsWith('빈 시간'));
+  check('★ 약도 배치: 실내체육관 두 칸, 아랫줄', $('.fac-cell[data-facility="f07"]').style.gridColumn.replace(/\s/g, '') === '3/span2' && $('.fac-cell[data-facility="f07"]').style.gridRow === '2');
+  $('.fac-cell[data-facility="f03"]').click(); await wait(40);
+  check('★ 시설을 고르면 시간 12칸', $$('.fac-slot').length === 12 && $('.fac-cell[data-facility="f03"]').classList.contains('selected'));
+  $('.fac-slot[data-start="15:00"]').click(); await wait(30);
+  check('빈 시간 누르면 1시간', $$('.fac-slot.chosen').length === 1 && $('.apply-range').textContent.includes('15:00~16:00 (1시간)'));
+  $('.fac-slot[data-start="16:00"]').click(); await wait(30);
+  check('★ 바로 다음 칸 누르면 2시간', $$('.fac-slot.chosen').length === 2 && $('.apply-range').textContent.includes('15:00~17:00 (2시간)'));
+  $('.fac-slot[data-start="17:00"]').click(); await wait(30);
+  check('★ 3시간째는 새로 1시간으로', $$('.fac-slot.chosen').length === 1 && $('.apply-range').textContent.includes('17:00~18:00'));
+  $('.fac-slot[data-start="17:00"]').click(); await wait(30);
+  check('고른 칸을 다시 누르면 풀림', $$('.fac-slot.chosen').length === 0 && !$('[data-action="reserve"]'));
+  $('.fac-slot[data-start="15:00"]').click(); await wait(30);
+  $('.fac-slot[data-start="16:00"]').click(); await wait(30);
+  $('[data-action="reserve"]').click(); await wait(60);
+  check('★ 예약 신청 → 안내, 내 예약에 "대기"', $('.fac-box .apply-message').textContent.includes('테니스장(주작관) 15:00~17:00') && $('.fac-my-list .status-badge').textContent === '대기');
+  check('달력 칸에 "신청" 표시', $(`.fac-cal-day[data-date="${pickDay}"] .fac-cal-tag`)?.textContent === '신청');
+  $(`.fac-cal-day[data-date="${pickDay}"]`).click(); await wait(40);
+  check('★ 같은 날 다시 고르면 "하루 1건" 안내', $('.fac-warn').textContent.includes('하루 1건'));
+  $('.fac-cell[data-facility="f03"]').click(); await wait(40);
+  check('내 신청 시간은 "내 신청"으로 막힘', $('.fac-slot[data-start="15:00"]').disabled && $('.fac-slot[data-start="15:00"]').textContent.includes('내 신청'));
+  // 근무 날 안내
+  const dutyD = fd.getMyDuties(rw.start, rw.end).find((x) => x.date > rw.start && x.date.slice(0, 7) === rw.start.slice(0, 7));
+  if (dutyD) {
+    $(`.fac-cal-day[data-date="${dutyD.date}"]`).click(); await wait(40);
+    check('★ 근무 날: "근무가 있습니다" 안내, 예약은 가능', $('.fac-note')?.textContent.includes('근무가 있습니다') && !!$('.fac-map'));
+  }
+  // 취소
+  f.contentWindow.confirm = () => true;
+  $('.fac-my-list .danger').click(); await wait(50);
+  check('★ 화면: 예약 취소 → "취소"', $('.fac-my-list .status-badge').textContent === '취소');
+  check('360px 가로 넘침 없음 (병사)', f.contentDocument.documentElement.scrollWidth <= 360);
+  // 출타 중인 날
+  await open('u05', '#apply/facility');
+  if ('2026-11-12' >= rw.start && '2026-11-12' <= rw.end) {
+    const c12 = $('.fac-cal-day[data-date="2026-11-12"]');
+    check('출타 날 달력 칸: "출타"', c12.querySelector('.fac-cal-tag').textContent === '출타');
+    c12.click(); await wait(40);
+    $('.fac-cell[data-facility="f02"]').click(); await wait(40);
+    $$('.fac-slot.state-free')[0]?.click(); await wait(30);
+    check('★ 출타 날: 안내 + 신청 버튼 막힘', $('.fac-warn').textContent.includes('출타 중') && $('[data-action="reserve"]').disabled);
+  }
+
+  // 간부: 승인 대기·반려·시설 막기
+  await open('o01', '#apply/facility');
+  f.contentWindow.confirm = () => true;
+  f.contentWindow.alert = (m) => out.push('ALERT ' + m);
+  const dlg = $('#facility-dialog');
+  check('★ 간부: 승인 대기 목록이 맨 위', $('.facility-section h3').textContent === '승인 대기' && $$('.fac-pending-list .fac-item').length === 2);
+  check('대기 목록: 신청자 이름과 신청 시각', /최나래 · \d+\/\d+ \d\d:\d\d 신청/.test($('.fac-pending-list .fac-item').textContent), $('.fac-pending-list .fac-item').textContent);
+  $('.fac-pending-list .approve').click(); await wait(60);
+  check('★ 화면: 승인하면 목록에서 빠짐', $$('.fac-pending-list .fac-item').length === 1);
+  $('.fac-pending-list .danger').click(); await wait(40);
+  check('반려 창 열림', dlg.open);
+  dlg.querySelector('form').requestSubmit(); await wait(40);
+  check('반려 사유 없으면 안내', dlg.open && !dlg.querySelector('[data-error-for="reject_reason"]').hidden);
+  dlg.querySelector('[name="reject_reason"]').value = '행사';
+  dlg.querySelector('form').requestSubmit(); await wait(60);
+  check('★ 화면: 반려 → 대기 없음', !dlg.open && !$('.fac-pending-list') && $('.facility-section').textContent.includes('승인 대기 중인 예약이 없습니다'));
+  check('간부: 시설 막기 목록', $$('.fac-block-list .grant-item').length === fd.getFacilityBlocks().length);
+  $('[data-action="add-block"]').click(); await wait(40);
+  const bf = dlg.querySelector('form');
+  check('막기 창: 시설 목록에 "모든 시설" + 7곳', bf.elements.facility_id.options.length === 8 && bf.elements.facility_id.options[0].textContent === '모든 시설');
+  bf.querySelector('input[value="time"]').click(); await wait(20);
+  check('시간 정하기를 고르면 시간 칸', !dlg.querySelector('.fac-block-times').hidden);
+  bf.elements.facility_id.value = 'f05';
+  bf.elements.date.value = addDays(rw.start, 3);
+  bf.elements.start_time.value = '18:00';
+  bf.elements.end_time.value = '20:00';
+  bf.elements.reason.value = '조명 수리';
+  bf.requestSubmit(); await wait(60);
+  check('★ 화면: 막기 추가', !dlg.open && $$('.fac-block-list .grant-item').some((x) => x.textContent.includes('풋살장(이정란관) 18:00~20:00') && x.textContent.includes('조명 수리')));
+  const blkItem = $$('.fac-block-list .grant-item').find((x) => x.textContent.includes('조명 수리'));
+  blkItem.querySelector('.danger').click(); await wait(50);
+  check('★ 화면: 풀기', !$$('.fac-block-list .grant-item').some((x) => x.textContent.includes('조명 수리')));
+  check('360px 가로 넘침 없음 (간부)', f.contentDocument.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

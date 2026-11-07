@@ -1,0 +1,196 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2600px;border:0"></iframe>
+<script type="module">
+// Phase 3.5-2: 간부 손 수정, 근무 날 출타 신청 막기
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+try {
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  const win = d.getApplyWindow();
+  const board = (date, post = '불침번') => d.getDutyBoard(date).find((p) => p.post_name === post);
+  const snap = (date) => JSON.stringify(d.getDutyBoard(date));
+
+  // ── 근무 날 출타 신청 막기 ──
+  as('u01');
+  const duties = d.getMyDuties(win.start, win.end);
+  check('김하늘에게 신청 기간 안 근무가 있음', duties.length > 2, duties.length);
+  // 정원이 찬 날(11/12~13)과 겹치지 않는 근무 날을 고른다
+  const D = duties.find((x) => x.date > addDays(win.start, 1) && (x.date < '2026-11-11' || x.date > '2026-11-14')) ?? duties[1];
+  check('getMyDutyDates', d.getMyDutyDates(win.start, win.end).includes(D.date));
+  let r = d.applyLeave({ start_date: D.date, end_date: D.date, items: { annual: 1 } });
+  check('★ 근무 날 휴가 신청 막힘 + "먼저 근무를 교대하세요"', !r.ok && r.errors.dates.includes('먼저 근무를 교대하세요') && r.errors.dates.includes(D.post_name), JSON.stringify(r));
+  const before = addDays(D.date, -1);
+  r = d.applyLeave({ start_date: before, end_date: addDays(D.date, 1), items: { annual: 3 } });
+  check('★ 기간 중간에 근무가 있어도 막힘', !r.ok && r.errors.dates.includes('먼저 근무를 교대하세요'), JSON.stringify(r));
+  r = d.applyAbsence({ kind: 'outing', start_date: D.date });
+  check('★ 근무 날 외출 막힘', !r.ok && r.errors.dates.includes('먼저 근무를 교대하세요'), JSON.stringify(r));
+  r = d.applyAbsence({ kind: 'outing', start_date: D.date, use_pass: true });
+  check('포상 외출도 막힘', !r.ok && r.errors.dates?.includes('먼저 근무를 교대하세요'), JSON.stringify(r));
+  // 일요일에 근무가 있으면 그 전 토요일 외박도 막힘
+  const sunDuty = duties.find((x) => new Date(x.date).getDay() === 0 && addDays(x.date, -1) >= win.start);
+  if (sunDuty) {
+    r = d.applyAbsence({ kind: 'overnight', start_date: addDays(sunDuty.date, -1) });
+    check('★ 일요일 근무면 토요일 외박 막힘', !r.ok && r.errors.dates.includes('먼저 근무를 교대하세요'), JSON.stringify(r));
+  }
+  const free = (() => { for (let x = addDays(win.start, 1); x <= win.end; x = addDays(x, 1)) if (!d.getMyDutyDates(x, x).length && (x < '2026-11-12' || x > '2026-11-13') && new Date(x).getDay() % 6 !== 0) return x; })();
+  r = d.applyAbsence({ kind: 'outing', start_date: free });
+  check('근무 없는 날 외출은 됨', r.ok, JSON.stringify(r));
+  d.cancelLeaveRequest(r.request?.id);
+
+  // ── 간부 손 수정 ──
+  const pd = board(D.date).post_id === D.post_id ? D.post_id : D.post_id;
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: 'u02' });
+  check('병사는 손 수정 못 함', !r.ok && r.reason === 'forbidden');
+  check('병사는 후보 목록 못 받음', d.getDutyCandidates(D.post_id, D.date, D.slot).length === 0);
+  as('o01');
+  const auditBefore = mockDb.audit_logs.length;
+  const cands = d.getDutyCandidates(D.post_id, D.date, D.slot);
+  const busyIds = d.getDutyBoard(D.date).flatMap((p) => p.slots.map((s) => s.user_id)).filter(Boolean);
+  check('후보: 지금 근무자 표시', cands.find((c) => c.id === 'u01')?.current === true);
+  check('후보: 그날 다른 근무가 있는 사람은 막힘', busyIds.filter((id) => id !== 'u01').every((id) => cands.find((c) => c.id === id)?.blocked?.includes('근무')));
+  const pick = cands.find((c) => !c.current && !c.blocked);
+  const nextDaySnap = snap(addDays(D.date, 1));
+  const otherSlotsBefore = board(D.date, D.post_name).slots.filter((s) => s.slot !== D.slot).map((s) => s.user_id).join();
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: pick.id });
+  check('★ 간부가 근무자를 바꿈', r.ok, JSON.stringify(r));
+  const changed = board(D.date, D.post_name).slots.find((s) => s.slot === D.slot);
+  check('★ 근무표에 새 근무자 + "간부 수정"', changed.user_id === pick.id && changed.source === 'manual', JSON.stringify(changed));
+  check('같은 날 다른 시간대는 그대로', board(D.date, D.post_name).slots.filter((s) => s.slot !== D.slot).map((s) => s.user_id).join() === otherSlotsBefore);
+  check('★ 다른 날은 순번대로 (안 바뀜)', snap(addDays(D.date, 1)) === nextDaySnap);
+  check('변경 기록 남음', mockDb.audit_logs.length === auditBefore + 1 && mockDb.audit_logs.at(-1).action === 'set_duty_override' && mockDb.audit_logs.at(-1).actor_id === 'o01');
+  const ov = mockDb.duty_overrides.at(-1);
+  check('duty_overrides 항목 (근무지·날짜·시간대·근무자·출처·바꾼 사람·시각)', ov.post_id === D.post_id && ov.date === D.date && ov.slot === D.slot && ov.user_id === pick.id && ov.source === 'manual' && ov.changed_by === 'o01' && !!ov.changed_at);
+  // 막히는 경우
+  const away = 'u05';
+  r = d.setDutyOverride({ post_id: D.post_id, date: '2026-11-12', slot: 0, user_id: away });
+  check('출타 중인 사람은 못 넣음', '2026-11-12' > win.end || (!r.ok && r.errors.user_id.includes('출타')), JSON.stringify(r));
+  const busy = busyIds.find((id) => id !== 'u01' && id !== pick.id);
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: busy });
+  check('그날 근무가 있는 사람은 못 넣음', !r.ok && r.errors.user_id.includes('이미'), JSON.stringify(r));
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: pick.id });
+  check('지금 근무자와 같으면 안내', !r.ok && r.errors.user_id.includes('같은 사람'));
+  r = d.setDutyOverride({ post_id: D.post_id, date: addDays(win.end, 1), slot: 0, user_id: pick.id });
+  check('한 달 넘는 날은 못 바꿈', !r.ok && r.errors.user_id.includes('한 달 이내'));
+  r = d.setDutyOverride({ post_id: D.post_id, date: addDays(win.start, -1), slot: 0, user_id: pick.id });
+  check('지난 날은 못 바꿈', !r.ok && r.reason === 'invalid');
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: 99, user_id: pick.id });
+  check('없는 시간대', !r.ok && r.reason === 'invalid');
+  r = d.setDutyOverride({ post_id: 'd99', date: D.date, slot: 0, user_id: pick.id });
+  check('없는 근무지', !r.ok && r.reason === 'not_found');
+  r = d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: 'o02' });
+  check('간부는 근무자로 못 넣음', !r.ok && r.reason === 'invalid');
+
+  // 바뀐 뒤: 김하늘은 그날 출타 신청 가능
+  as('u01');
+  check('★ 손 수정 후 김하늘 근무 목록에서 빠짐', !d.getMyDuties(D.date, D.date).some((x) => x.post_id === D.post_id && x.slot === D.slot));
+  const canOut = d.getMyDuties(D.date, D.date).length === 0;
+  if (canOut) {
+    r = d.applyLeave({ start_date: D.date, end_date: D.date, items: { annual: 1 } });
+    check('★ 근무가 빠지면 그날 휴가 신청 가능', r.ok, JSON.stringify(r));
+    d.cancelLeaveRequest(r.request?.id);
+  }
+  as(pick.id);
+  check('★ 새 근무자 달력에 근무', d.getCalendarEvents(D.date, D.date).some((e) => e.type === 'duty' && e.title === `${D.post_name} ${D.label}`));
+  r = d.applyLeave({ start_date: D.date, end_date: D.date, items: { annual: 1 } });
+  check('새 근무자는 그날 신청 막힘', !r.ok && r.errors.dates?.includes('먼저 근무를 교대하세요'), JSON.stringify(r));
+
+  // 되돌리기
+  r = d.clearDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot });
+  check('병사는 되돌리기 못 함', !r.ok && r.reason === 'forbidden');
+  as('o01');
+  r = d.clearDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot });
+  const back = board(D.date, D.post_name).slots.find((s) => s.slot === D.slot);
+  check('★ 순번대로 되돌리기', r.ok && back.user_id === 'u01' && back.source === 'rotation', JSON.stringify(back));
+  check('되돌리기 기록', mockDb.audit_logs.at(-1).action === 'clear_duty_override');
+  r = d.clearDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot });
+  check('바뀐 것이 없으면 not_found', !r.ok && r.reason === 'not_found');
+  // 근무지 명단을 고치면 오늘부터 손 수정이 지워짐
+  d.setDutyOverride({ post_id: D.post_id, date: D.date, slot: D.slot, user_id: pick.id });
+  const post = d.getDutyPosts().find((p) => p.id === D.post_id);
+  d.saveDutyPost({ id: post.id, name: post.name, slots: post.slots, roster: [...post.roster.map((x) => x.user_id)].reverse() });
+  check('명단을 고치면 오늘부터의 손 수정은 지워짐', !mockDb.duty_overrides.some((o) => o.post_id === D.post_id && o.date >= win.start));
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?u=${id}${Math.random()}${hash}`; });
+  let $ = (q) => f.contentDocument.querySelector(q);
+  let $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+
+  // 병사: 신청 달력에서 근무 날은 회색 "근무"
+  await open('u01', '#apply/duty');
+  const myDates = [];
+  for (let i = 0; i < 2; i++) { myDates.push(...$$('.duty-cal-day.has-duty').map((x) => x.dataset.date)); const nx = $('[data-action="duty-cal-next"]'); if (nx.disabled) break; nx.click(); await wait(30); }
+  f.contentWindow.location.hash = '#apply/leave'; await wait(80);
+  const fd = f.contentWindow;
+  const box = () => $('.apply-box:not(.roster-box)');
+  const goMonth = async (date) => { const [y, m] = date.split('-').map(Number); for (let i = 0; i < 3; i++) { const [cy, cm] = box().querySelector('.apply-month').textContent.match(/\d+/g).map(Number); if (cy === y && cm === m) return; box().querySelector(`[data-action="apply-${cy * 12 + cm < y * 12 + m ? 'next' : 'prev'}"]`).click(); await wait(30); } };
+  const U = myDates.find((x) => x > win.start) ?? myDates[0];
+  await goMonth(U);
+  const cellU = $(`.apply-day[data-date="${U}"]`);
+  check('★ 화면: 근무 날 칸은 누를 수 없고 "근무" 글자', cellU.disabled && cellU.classList.contains('duty') && cellU.classList.contains('full') && cellU.querySelector('.apply-seats').textContent === '근무');
+  check('화면: 읽어주기에 "먼저 근무를 교대하세요"', cellU.getAttribute('aria-label').includes('먼저 근무를 교대하세요'));
+  check('화면: 안내 문구에 근무 설명', box().querySelector('.apply-guide').textContent.includes('"근무"'));
+  // 외박: 일요일이 근무면 그 토요일은 누를 수 없음
+  const sunU = myDates.find((x) => new Date(x).getDay() === 0 && addDays(x, -1) >= win.start);
+  if (sunU) {
+    box().querySelector('.apply-kind[data-kind="overnight"]').click(); await wait(30);
+    await goMonth(addDays(sunU, -1));
+    const sat = $(`.apply-day[data-date="${addDays(sunU, -1)}"]`);
+    check('★ 화면: 일요일 근무면 토요일 외박 칸 막힘', sat.disabled);
+  }
+  // 휴가로 근무 날을 사이에 두고 고르면 신청할 때 안내
+  box().querySelector('.apply-kind[data-kind="leave"]').click(); await wait(30);
+  const s0 = addDays(U, -1), e0 = addDays(U, 1);
+  const okDay = (x) => { const c = $(`.apply-day[data-date="${x}"]`); return c && !c.disabled; };
+  await goMonth(s0);
+  if (okDay(s0)) {
+    $(`.apply-day[data-date="${s0}"]`).click(); await wait(30);
+    await goMonth(e0);
+    if (okDay(e0)) {
+      $(`.apply-day[data-date="${e0}"]`).click(); await wait(30);
+      $('[data-action="apply-leave"]').click(); await wait(50);
+      check('★ 화면: 기간 안에 근무가 있으면 "먼저 근무를 교대하세요"', $('.apply-form .form-error').textContent.includes('먼저 근무를 교대하세요'), $('.apply-form .form-error').textContent);
+    }
+  }
+  check('360px 가로 넘침 없음 (병사)', f.contentDocument.documentElement.scrollWidth <= 360);
+  check('병사 근무표에 "바꾸기" 없음', $$('[data-override]').length === 0);
+
+  // 간부: 근무표에서 바꾸기
+  await open('o01', '#apply/duty');
+  const dlg = $('#duty-dialog');
+  check('간부 근무표에 "바꾸기" 버튼', $$('.duty-slot [data-override]').length === 4);
+  $('[data-action="duty-prev"]').click(); await wait(30);
+  check('어제 근무표에는 "바꾸기" 없음', $$('[data-override]').length === 0);
+  $('[data-action="duty-today"]').click(); await wait(30);
+  const btn = $('[data-override="d01:0"]');
+  const oldName = btn.closest('.duty-slot').querySelector('.duty-slot-name').textContent;
+  btn.click(); await wait(30);
+  check('★ 바꾸기 창이 열림 (날짜·근무지·지금 근무자)', dlg.open && $('.duty-override-target').textContent.includes('불침번 1번초') && $('.duty-override-target').textContent.includes(oldName));
+  const opts = [...dlg.querySelector('select').options];
+  check('창: 지금 근무자·다른 근무자는 고를 수 없음', opts.filter((o) => o.disabled).length >= 4 && opts.find((o) => o.textContent.startsWith(oldName)).disabled);
+  check('창: 처음엔 고를 수 있는 사람이 골라져 있음', !dlg.querySelector('select').selectedOptions[0].disabled);
+  check('창: 처음엔 되돌리기 버튼 없음', !dlg.querySelector('[data-action="reset-override"]'));
+  const newName = dlg.querySelector('select').selectedOptions[0].textContent.split(' · ')[0];
+  dlg.querySelector('form').requestSubmit(); await wait(50);
+  const row = $('[data-override="d01:0"]').closest('.duty-slot');
+  check('★ 화면: 바꾼 사람과 "간부 수정" 표시', !dlg.open && row.querySelector('.duty-slot-name').textContent === newName && row.querySelector('.duty-slot-source').textContent === '간부 수정');
+  check('저장 뒤 바꾸기 버튼으로 돌아옴', f.contentDocument.activeElement === $('[data-override="d01:0"]'));
+  $('[data-override="d01:0"]').click(); await wait(30);
+  check('바뀐 근무는 "순번대로 되돌리기" 있음', !!dlg.querySelector('[data-action="reset-override"]'));
+  dlg.querySelector('[data-action="reset-override"]').click(); await wait(50);
+  const row2 = $('[data-override="d01:0"]').closest('.duty-slot');
+  check('★ 화면: 되돌리면 원래 근무자', !dlg.open && row2.querySelector('.duty-slot-name').textContent === oldName && !row2.querySelector('.duty-slot-source'));
+  $('[data-override="d01:0"]').click(); await wait(30);
+  dlg.querySelector('[data-action="close"]').click(); await wait(30);
+  check('취소로 창 닫힘', !dlg.open);
+  check('360px 가로 넘침 없음 (간부)', f.contentDocument.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

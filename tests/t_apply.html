@@ -1,0 +1,164 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2000px;border:0"></iframe>
+<script type="module">
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDays = (s, n) => { const [y, m, d] = s.split('-').map(Number); return iso(new Date(y, m - 1, d + n)); };
+try {
+  // ── 데이터 계층 (날짜를 2026-10-24로 고정) ──
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const NOW = new Date(2026, 9, 24, 9).getTime();
+  const rem = () => Object.fromEntries(d.getMyLeaveSummary().map((x) => [x.leave_type, x.remaining]));
+
+  check('신청 기간: 오늘~한 달 뒤', JSON.stringify(d.getApplyWindow(NOW)) === '{"start":"2026-10-24","end":"2026-11-24"}');
+  check('1/31 → 2/28 (다음 달에 31일 없음)', d.getApplyWindow(new Date(2026, 0, 31, 9).getTime()).end === '2026-02-28');
+  check('12/15 → 다음 해 1/15', d.getApplyWindow(new Date(2026, 11, 15, 9).getTime()).end === '2027-01-15');
+
+  check('들어오기 전 신청 불가', d.applyLeave({ start_date: '2026-10-27', end_date: '2026-10-27', items: { annual: 1 } }, NOW).reason === 'forbidden');
+  d.signIn('백지훈', codeOf('o01'));
+  check('간부는 휴가 신청 불가', d.applyLeave({ start_date: '2026-10-27', end_date: '2026-10-27', items: { annual: 1 } }, NOW).reason === 'forbidden');
+  d.signOut();
+  d.signIn('김하늘', codeOf('u01'));
+  check('처음 남은 일수: 연가24·포상3·위로0', JSON.stringify(rem()) === '{"annual":24,"reward":3,"consolation":0}');
+  const bad = (input) => d.applyLeave(input, NOW).errors ?? {};
+  check('오늘보다 앞은 불가', bad({ start_date: '2026-10-23', end_date: '2026-10-25', items: { annual: 3 } }).dates?.includes('한 달 이내'));
+  check('한 달 뒤보다 뒤는 불가', bad({ start_date: '2026-11-23', end_date: '2026-11-25', items: { annual: 3 } }).dates?.includes('한 달 이내'));
+  check('한 달 뒤 당일까지는 날짜 통과(경계)', (() => { const e = bad({ start_date: '2026-11-24', end_date: '2026-11-24', items: { annual: 0 } }); return !e.dates && !!e.items; })());
+  check('복귀일이 앞이면 불가', bad({ start_date: '2026-10-27', end_date: '2026-10-26', items: { annual: 1 } }).dates?.includes('같거나 뒤'));
+  check('합이 기간과 다르면 불가', bad({ start_date: '2026-10-27', end_date: '2026-10-31', items: { annual: 3 } }).items?.includes('(3일)이 휴가 기간(5일)'));
+  check('남은 일수 넘으면 부족한 일수 안내', bad({ start_date: '2026-10-27', end_date: '2026-10-27', items: { consolation: 1 } }).items === '위로휴가 1일 부족 (남은 0일)');
+  check('포상 4일은 1일 부족', bad({ start_date: '2026-10-27', end_date: '2026-10-30', items: { reward: 4 } }).items === '포상휴가 1일 부족 (남은 3일)');
+  check('음수 거부', !!bad({ start_date: '2026-10-27', end_date: '2026-10-27', items: { annual: 2, reward: -1 } }).items);
+  const evBefore = mockDb.events.length;
+  let r = d.applyLeave({ start_date: '2026-10-27', end_date: '2026-10-31', items: { annual: '3', reward: '2', consolation: '0' } }, NOW);
+  check('연가3+포상2 = 5일 신청 성공', r.ok && r.request.status === 'requested' && r.request.days === 5 && r.request.kind === 'leave', JSON.stringify(r.request));
+  const req1 = r.request;
+  check('남은 일수 바로 줄어듦: 연가21·포상1', JSON.stringify(rem()) === '{"annual":21,"reward":1,"consolation":0}');
+  check('사용 일수 0인 종류는 기록 안 함', mockDb.leave_request_items.filter((x) => x.request_id === req1.id).length === 2);
+  const ev = mockDb.events.find((e) => e.id === req1.event_id);
+  check('달력용 일정 생성(휴가, 10/27~10/31, 본인)', mockDb.events.length === evBefore + 1 && ev.type === 'leave' && ev.title === '휴가' && ev.start_date === '2026-10-27' && ev.end_date === '2026-10-31' && ev.author_id === 'u01');
+  check('내 달력에 휴가 보임(수정 버튼 없음)', d.getCalendarEvents('2026-10-29', '2026-10-29').some((e) => e.type === 'leave' && e.editable === false));
+  check('겹치면 불가', bad({ start_date: '2026-10-31', end_date: '2026-11-01', items: { annual: 2 } }).dates?.includes('겹칩니다'));
+  r = d.applyLeave({ start_date: '2026-11-01', end_date: '2026-11-01', items: { annual: 1 } }, NOW);
+  check('바로 다음 날 하루짜리는 가능', r.ok && r.request.days === 1);
+  const req2 = r.request;
+  check('내 신청 목록(최근 출발일 먼저)', d.getMyLeaveRequests().map((x) => x.id).join() === `${req2.id},${req1.id}`);
+  d.signOut();
+  d.signIn('이바다', codeOf('u02'));
+  check('다른 병사 달력엔 안 보임', !d.getCalendarEvents('2026-10-29', '2026-10-29').some((e) => e.type === 'leave'));
+  check('남의 신청은 취소 불가', d.cancelLeaveRequest(req1.id).reason === 'not_found');
+  check('다른 병사는 같은 날도 신청 가능(정원은 3-3)', d.applyLeave({ start_date: '2026-10-29', end_date: '2026-10-29', items: { annual: 1 } }, NOW).ok);
+  d.signOut();
+  d.signIn('김하늘', codeOf('u01'));
+  r = d.cancelLeaveRequest(req1.id, NOW);
+  check('취소', r.ok && r.request.status === 'cancelled' && !!r.request.cancelled_at);
+  check('취소하면 일수 되돌아옴', JSON.stringify(rem()) === '{"annual":23,"reward":3,"consolation":0}');
+  check('취소하면 달력에서 사라짐', !mockDb.events.some((e) => e.id === req1.event_id) && !d.getCalendarEvents('2026-10-29', '2026-10-29').some((e) => e.type === 'leave'));
+  check('취소한 건도 기록에 남음(날짜 포함)', d.getMyLeaveRequests().find((x) => x.id === req1.id)?.start_date === '2026-10-27');
+  check('두 번 취소 불가', d.cancelLeaveRequest(req1.id).reason === 'already_cancelled');
+  check('취소한 날짜는 다시 신청 가능', d.applyLeave({ start_date: '2026-10-28', end_date: '2026-10-29', items: { annual: 2 } }, NOW).ok);
+  d.signOut();
+
+  // ── 화면 (실제 오늘 기준) ──
+  localStorage.clear(); localStorage.setItem('basecal.session', '"u01"');
+  const f = document.getElementById('f');
+  await new Promise((res) => { f.onload = () => setTimeout(res, 300); f.src = 'index.html?ap=1#apply'; });
+  const doc = f.contentDocument, w = f.contentWindow;
+  const $ = (q) => doc.querySelector(q);
+  const $$ = (q) => [...doc.querySelectorAll(q)];
+  const fd = await import('./js/data.js?frame-window');
+  const win = fd.getApplyWindow();
+  const cell = (date) => $(`.apply-day[data-date="${date}"]`);
+  const pick = async (a, b) => { cell(a).click(); await wait(30); cell(b).click(); await wait(30); };
+  const card = (t) => $(`.leave-card[data-leave-type="${t}"] .leave-card-remaining`).textContent;
+  const goApplyMonth = async (date) => { const [y, m] = date.split('-').map(Number); for (let i = 0; i < 4; i++) { const [cy, cm] = $('.apply-month').textContent.match(/\d+/g).map(Number); if (cy === y && cm === m) return; $(`[data-action="${cy * 12 + cm < y * 12 + m ? 'apply-next' : 'apply-prev'}"]`).click(); await wait(30); } };
+
+  check('3-2 안내 문구 없어짐', !$$('.placeholder').some((p) => p.textContent.includes('(3-2)')));
+  check('휴가 신청 상자가 카드 아래', !!$('.apply-box') && $('.leave-summary').compareDocumentPosition($('.apply-box')) & Node.DOCUMENT_POSITION_FOLLOWING);
+  check('이번 달부터, 이전 달 버튼 막힘', $('.apply-month').textContent.startsWith(win.start.slice(0, 4)) && $('[data-action="apply-prev"]').disabled);
+  const yesterday = addDays(win.start, -1);
+  if (yesterday.slice(0, 7) === win.start.slice(0, 7)) check('어제는 누를 수 없음', cell(yesterday).disabled && cell(yesterday).classList.contains('outside'));
+  check('오늘은 누를 수 있음', !cell(win.start).disabled);
+  check('처음 안내: 출발일을 누르세요', $('.apply-guide').textContent.startsWith('출발일을 누르세요'));
+  const s1 = addDays(win.start, 7), e1 = addDays(win.start, 9); // 11/12~13 마감과 겹치지 않게 (2026-11-07 고침)
+  await goApplyMonth(s1);
+  cell(s1).click(); await wait(30);
+  check('출발일 누르면 복귀일 안내', $('.apply-guide').textContent.includes('복귀일을 누르세요') && cell(s1).classList.contains('range-start'));
+  await goApplyMonth(e1);
+  cell(e1).click(); await wait(30);
+  check('기간·일수 표시(3일)', $('.apply-range').textContent.includes('3일 (출발·복귀일 포함)'));
+  check('기본 배분: 연가 3', $('.apply-form').elements.annual.value === '3' && $('.apply-form').elements.reward.value === '0');
+  check('합계 맞음 표시', $('.apply-sum').textContent === '합계 3일 / 3일 ✓');
+  check('신청 버튼 글자', $('[data-action="apply-leave"]').textContent === '3일 휴가 신청하기');
+  $('.apply-form').elements.annual.value = '1'; $('.apply-form').elements.annual.dispatchEvent(new Event('input', { bubbles: true })); await wait(20);
+  check('합계 안 맞으면 빨간 안내', $('.apply-sum').classList.contains('mismatch') && $('.apply-sum').textContent.includes('맞추세요'));
+  $('.apply-form').requestSubmit(); await wait(30);
+  check('안 맞으면 신청 막고 이유 안내', !$('.apply-form .form-error').hidden && $('.apply-form .form-error').textContent.includes('같아야'));
+  $('.apply-form').elements.reward.value = '2'; $('.apply-form').elements.reward.dispatchEvent(new Event('input', { bubbles: true }));
+  $('.apply-form').requestSubmit(); await wait(50);
+  check('연가1+포상2 신청 성공 안내', $('.apply-message')?.textContent.includes('3일 휴가 자리를 확보했습니다') && $('.apply-message').textContent.includes('정식 휴가 결재는 기존 부대 절차'));
+  check('카드 바로 반영: 연가23·포상1', card('annual') === '23일' && card('reward') === '1일');
+  check('신청한 날은 회색으로 막힘', (await goApplyMonth(s1), cell(s1).disabled && cell(s1).classList.contains('mine') && !cell(s1).querySelector('.apply-tag')));
+  const applyBars = () => [...doc.querySelectorAll('.apply-bar')];
+  const barsOver = (date) => applyBars().filter((b) => b.dataset.start <= date && date <= b.dataset.end);
+  check('신청 달력에도 휴가 막대', barsOver(s1).length === 1 && barsOver(s1)[0].textContent === '휴가');
+  check('사흘이 같은 주면 막대 하나에 글자 한 번', (() => { const b = barsOver(s1)[0]; const sameWeek = b.dataset.end === e1 || b.classList.contains('cont-right'); return sameWeek && applyBars().filter((x) => x.closest('.apply-week') === b.closest('.apply-week')).length === 1; })());
+  check('막대 글자 가운데 정렬', w.getComputedStyle(barsOver(s1)[0]).textAlign === 'center');
+  check('막대가 칸을 이어서 차지', (() => { const b = barsOver(s1)[0]; const span = b.style.gridColumn.split('/').map((x) => Number(x.trim())); return span[1] - span[0] === (Number(b.dataset.end.slice(8)) - Number(b.dataset.start.slice(8)) + 1); })(), barsOver(s1)[0]?.style.gridColumn);
+  const reqItem = () => $$('.request-list .grant-item');
+  check('내 신청 내역: 자리 확보·3일·연가1+포상2, 승인 없음 안내', [...$$('.leave-section .help')].some((x) => x.textContent.includes('앱에서 따로 승인받지 않습니다')) && reqItem()[0]?.querySelector('.status-badge').textContent === '자리 확보' && reqItem()[0].querySelector('.grant-title').textContent.endsWith('· 3일') && reqItem()[0].querySelector('.grant-meta').textContent === '연가 1 + 포상휴가 2');
+  // 위로휴가 0일 → 부족 안내
+  const s2 = addDays(win.start, 10);
+  await goApplyMonth(s2);
+  await pick(s2, s2);
+  $('.apply-form').elements.annual.value = '0'; $('.apply-form').elements.consolation.value = '1';
+  $('.apply-form').requestSubmit(); await wait(30);
+  check('남은 일수 넘으면 부족한 일수 안내', $('.apply-form .form-error').textContent.includes('위로휴가 1일 부족'));
+  $('[data-action="apply-reset"]').click(); await wait(30);
+  check('날짜 다시 고르기', !$('.apply-form') && $('.apply-guide').textContent.startsWith('출발일'));
+  // 달력 탭에 휴가 막대
+  w.location.hash = '#calendar'; await wait(80);
+  const [cy, cm] = s1.split('-').map(Number);
+  for (let i = 0; i < 3 && $('.cal-title').textContent.trim() !== `${cy}년 ${cm}월`; i++) { $('[data-action="next"]').click(); await wait(30); }
+  check('달력 탭에 휴가 막대', [...doc.querySelectorAll('.cal-bar')].some((b) => b.textContent === '휴가' && b.classList.contains('type-leave') && b.dataset.start <= s1 && s1 <= b.dataset.end));
+  w.location.hash = '#apply'; await wait(80);
+  // 취소
+  w.confirm = () => false;
+  reqItem()[0].querySelector('.danger').click(); await wait(30);
+  check('취소 확인에서 아니오면 그대로', card('annual') === '23일');
+  w.confirm = () => true;
+  reqItem()[0].querySelector('.danger').click(); await wait(50);
+  check('취소하면 일수 되돌아옴', card('annual') === '24일' && card('reward') === '3일' && $('.apply-message').textContent.includes('취소했습니다'));
+  check('내역에 취소 표시, 취소 버튼 없음', reqItem()[0].querySelector('.status-badge').textContent === '취소' && !reqItem()[0].querySelector('.danger'));
+  check('취소한 날 다시 누를 수 있음', (await goApplyMonth(s1), !cell(s1).disabled));
+  check('취소하면 신청 달력 막대도 사라짐', !barsOver(s1).length);
+  // 토요일~다음 주 월요일 휴가: 주가 바뀌면 막대가 둘로 나뉘고 새 줄에서 글자를 다시 쓴다
+  let sat = addDays(win.start, 1);
+  while (new Date(...sat.split('-').map((x, i) => (i === 1 ? Number(x) - 1 : Number(x)))).getDay() !== 6 || sat.slice(0, 7) !== addDays(sat, 2).slice(0, 7)) sat = addDays(sat, 1);
+  const mon = addDays(sat, 2);
+  await goApplyMonth(sat);
+  await pick(sat, mon);
+  $('.apply-form').elements.annual.value = '3'; $('.apply-form').elements.reward.value = '0'; $('.apply-form').elements.consolation.value = '0';
+  $('.apply-form').requestSubmit(); await wait(50);
+  await goApplyMonth(sat);
+  const split = applyBars().filter((b) => b.dataset.start >= sat && b.dataset.end <= mon);
+  check('주가 바뀌면 막대 2개, 각 줄에 글자', split.length === 2 && split.every((b) => b.textContent === '휴가'), split.map((b) => `${b.dataset.start}~${b.dataset.end}`).join());
+  check('끊긴 쪽 모서리 표시', split[0]?.classList.contains('cont-right') && split[1]?.classList.contains('cont-left'));
+  const last = win.end;
+  await goApplyMonth(last);
+  check('한 달 뒤 날까지는 누를 수 있음', !cell(last).disabled);
+  const after = addDays(last, 1);
+  if (cell(after)) check('그 다음 날은 누를 수 없음', cell(after).disabled);
+  check('다음 달 버튼은 마지막 달에서 막힘', $('[data-action="apply-next"]').disabled);
+  check('360px 가로 넘침 없음', doc.documentElement.scrollWidth <= 360, doc.documentElement.scrollWidth);
+  localStorage.setItem('basecal.session', '"o01"');
+  await new Promise((res) => { f.onload = () => setTimeout(res, 300); f.src = 'index.html?ap=2#apply'; });
+  check('간부에겐 휴가 신청 상자 없음', !f.contentDocument.querySelector('.apply-box:not(.roster-box)'));
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

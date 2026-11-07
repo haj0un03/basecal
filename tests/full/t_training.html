@@ -1,0 +1,122 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2400px;border:0"></iframe>
+<script type="module">
+// 훈련 등록 → 그 기간 출타율 0% 제안 (2026-11-07)
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+try {
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  const win = d.getApplyWindow();
+  // 11/12~13 휴가 4명이 있는 기간을 포함하는 훈련
+  const S = '2026-11-12', E = '2026-11-14';
+
+  as('o01');
+  let r = d.addUnitEvent({ unit_category: 'training', title: '', start_date: S, end_date: E, memo: '' });
+  const ev = r.event;
+  check('훈련 일정 저장', r.ok);
+  let info = d.getTrainingRateInfo(ev.id);
+  check('★ 처음엔 연결된 출타율 없음, 그 기간 이미 신청된 출타 수', info.linked === null && info.absences === 4, JSON.stringify(info));
+  r = d.setTrainingRate(ev.id);
+  check('★ 0% 넣기: 총 출타·휴가 두 기간, 훈련과 연결', r.ok && mockDb.leave_rate_periods.filter((p) => p.source_event_id === ev.id).map((p) => `${p.kind}:${p.rate}:${p.start_date}:${p.end_date}`).sort().join() === `leave:0:${S}:${E},total:0:${S}:${E}`);
+  check('기록 남김', mockDb.audit_logs.at(-1).action === 'set_training_rate');
+  const av = d.getDayAvailability('outing', S, E);
+  check('★ 그 기간 모든 날 마감 (정원 0)', av.length === 3 && av.every((x) => x.full), JSON.stringify(av.map((x) => x.full)));
+  as('u01');
+  const free = (() => { for (let x = S; x <= E; x = addDays(x, 1)) if (!d.getMyDuties(x, x).length) return x; })();
+  r = d.applyAbsence({ kind: 'outing', start_date: free, use_pass: true });
+  check('★ 병사: 훈련 기간에는 새 출타 신청 막힘', !r.ok && r.errors.dates.includes('마감'), JSON.stringify(r));
+  check('이미 신청된 출타는 그대로 남음', mockDb.leave_requests.filter((x) => x.status === 'requested' && x.start_date <= E && x.end_date >= S).length === 4);
+  r = d.setTrainingRate(ev.id);
+  check('병사는 못 넣음', !r.ok && r.reason === 'forbidden');
+  as('o01');
+  // 날짜를 바꾸면 옮기기
+  d.updateUnitEvent(ev.id, { unit_category: 'training', title: '', start_date: addDays(S, 1), end_date: addDays(E, 1), memo: '' });
+  info = d.getTrainingRateInfo(ev.id);
+  check('날짜를 바꾸면 연결된 기간과 달라짐 (화면이 다시 물음)', info.linked.start_date === S);
+  d.setTrainingRate(ev.id);
+  check('★ 새 기간으로 옮김 (두 개만 남음)', mockDb.leave_rate_periods.filter((p) => p.source_event_id === ev.id).every((p) => p.start_date === addDays(S, 1) && p.end_date === addDays(E, 1)) && mockDb.leave_rate_periods.filter((p) => p.source_event_id === ev.id).length === 2);
+  r = d.removeTrainingRate(ev.id);
+  check('★ 지우기', r.ok && !mockDb.leave_rate_periods.some((p) => p.source_event_id === ev.id) && mockDb.audit_logs.at(-1).action === 'remove_training_rate');
+  r = d.removeTrainingRate(ev.id);
+  check('없는 걸 지우면 not_found', !r.ok && r.reason === 'not_found');
+  const notTraining = d.addUnitEvent({ unit_category: 'event', title: '체육대회', start_date: S, end_date: S, memo: '' }).event;
+  r = d.setTrainingRate(notTraining.id);
+  check('훈련이 아닌 일정에는 못 넣음', !r.ok && r.reason === 'not_found');
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?t=${Math.random()}${hash}`; });
+  const $ = (q) => f.contentDocument.querySelector(q);
+  const $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  await open('o01', '#calendar');
+  const asked = [];
+  let answer = true;
+  f.contentWindow.confirm = (m) => { asked.push(m); return answer; };
+  const S2 = addDays(win.start, 2), E2 = addDays(win.start, 3);
+  // 훈련 등록
+  $('[data-action="add-unit-event"]').click(); await wait(40);
+  const fm = () => $('#event-dialog form');
+  fm().querySelector('input[value="training"]').click(); await wait(20);
+  fm().elements.start_date.value = S2;
+  fm().elements.end_date.value = E2;
+  fm().requestSubmit(); await wait(80);
+  check('★ 훈련을 저장하면 "출타율을 0%로 할까요?" 물음', asked.length === 1 && asked[0].includes('0%로 할까요') && asked[0].includes(`${S2} ~ ${E2}`), asked.join(' / '));
+  const fd = await f.contentWindow.Function('return import("./js/data.js")')();
+  const linkedCount = () => fd.getRateSettings().periods.filter((p) => p.source_event_id).length;
+  check('"예"를 누르면 0% 두 기간이 생김', linkedCount() === 2);
+  // 휴가 탭 기간 목록에 연결 표시
+  f.contentWindow.location.hash = '#apply/leave'; await wait(80);
+  check('★ 휴가 탭 기간별 출타율에 "훈련 일정과 연결"', $$('.period-list .grant-item').filter((x) => x.textContent.includes('훈련 일정과 연결')).length === 2);
+  f.contentWindow.location.hash = '#calendar'; await wait(80);
+  // 수정: 날짜를 바꾸면 "옮길까요?"
+  const [y, m] = S2.split('-').map(Number);
+  for (let i = 0; i < 2 && $('.cal-title').textContent.trim() !== `${y}년 ${m}월`; i++) { $('[data-action="next"]').click(); await wait(30); }
+  $(`.cal-day[data-date="${S2}"]`).click(); await wait(40);
+  const trainItem = () => $$('.cal-event').find((x) => x.textContent.includes('훈련') && x.querySelector('.small-button'));
+  trainItem().querySelector('.small-button').click(); await wait(40);
+  asked.length = 0;
+  fm().elements.end_date.value = addDays(E2, 1);
+  fm().requestSubmit(); await wait(80);
+  check('★ 날짜를 바꾸면 "새 기간으로 옮길까요?"', asked.length === 1 && asked[0].includes('옮길까요'), asked.join(' / '));
+  check('옮겨짐', fd.getRateSettings().periods.filter((p) => p.source_event_id).every((p) => p.end_date === addDays(E2, 1)));
+  // 같은 날짜로 다시 저장하면 묻지 않음
+  $(`.cal-day[data-date="${S2}"]`).click(); await wait(40);
+  trainItem().querySelector('.small-button').click(); await wait(40);
+  asked.length = 0;
+  fm().requestSubmit(); await wait(80);
+  check('날짜가 그대로면 묻지 않음', asked.length === 0);
+  // 삭제: 일정 삭제 확인 + "0% 출타율도 지울까요?"
+  $(`.cal-day[data-date="${S2}"]`).click(); await wait(40);
+  asked.length = 0;
+  trainItem().querySelector('.danger').click(); await wait(80);
+  check('★ 훈련을 지우면 "0% 출타율도 지울까요?"도 물음', asked.length === 2 && asked[1].includes('0% 출타율도 지울까요'), asked.join(' / '));
+  check('둘 다 "예" → 기간도 지워짐', linkedCount() === 0);
+  // "아니오"를 누르면 넣지 않음
+  answer = false;
+  $('[data-action="add-unit-event"]').click(); await wait(40);
+  fm().querySelector('input[value="training"]').click(); await wait(20);
+  fm().elements.start_date.value = S2;
+  fm().elements.end_date.value = S2;
+  asked.length = 0;
+  fm().requestSubmit(); await wait(80);
+  check('★ "아니오"면 출타율은 그대로', asked.length === 1 && linkedCount() === 0);
+  // 훈련 아닌 일정은 묻지 않음
+  $('[data-action="add-unit-event"]').click(); await wait(40);
+  fm().querySelector('input[value="event"]').click(); await wait(20);
+  fm().elements.title.value = '행사';
+  fm().elements.start_date.value = S2;
+  fm().elements.end_date.value = S2;
+  asked.length = 0;
+  fm().requestSubmit(); await wait(80);
+  check('훈련이 아닌 일정은 묻지 않음', asked.length === 0);
+  check('360px 가로 넘침 없음', f.contentDocument.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

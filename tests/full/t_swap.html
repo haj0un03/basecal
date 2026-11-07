@@ -1,0 +1,283 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2400px;border:0"></iframe>
+<script type="module">
+// Phase 3.5-3 근무 교대: 한 명이 요청(사유) → 간부 승인·반려. 맞바꾸기·대신 서기 (2026-11-07)
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  const win = d.getApplyWindow();
+  const key = (x) => ({ post_id: x.post_id, date: x.date, slot: x.slot });
+  const holder = (x) => d.getDutyBoard(x.date).find((p) => p.post_id === x.post_id).slots.find((s) => s.slot === x.slot);
+  const FULL = ['2026-11-12', '2026-11-13'];
+
+  as('u01');
+  const myDuties = d.getMyDuties(win.start, win.end);
+  const D = myDuties.find((x) => x.date > win.start && !FULL.includes(x.date));
+  const soldiers = d.getSwapPartners();
+  check('교대 상대 목록: 나 빼고 병사 이름만', soldiers.length > 5 && !soldiers.some((x) => x.id === 'u01') && soldiers.every((x) => Object.keys(x).join() === 'id,name'));
+  const busyOnD = d.getDutyBoard(D.date).flatMap((p) => p.slots.map((s) => s.user_id));
+  // 대신 서기 상대: D날 근무·출타 없는 병사
+  const freeOn = (id, date) => !d.getSoldierDuties(id).some((x) => x.date === date);
+  const coverP = soldiers.find((x) => !busyOnD.includes(x.id) && freeOn(x.id, D.date));
+  // 맞바꾸기 상대: D날 비어 있고, 내가 비어 있는 날(E)에 근무가 있는 병사
+  let swapP = null, E = null;
+  for (const p of soldiers) {
+    if (busyOnD.includes(p.id) || p.id === coverP.id) continue;
+    const e = d.getSoldierDuties(p.id).find((x) => !FULL.includes(x.date) && x.date !== D.date && !myDuties.some((m) => m.date === x.date));
+    if (e) { swapP = p; E = e; break; }
+  }
+  check('점검 준비: 내 근무 D, 대신 서기 상대, 맞바꾸기 상대와 근무 E', D && coverP && swapP && E, `${D?.date} ${coverP?.id} ${swapP?.id} ${E?.date}`);
+
+  // ── 요청 입력 확인 ──
+  let r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: coverP.id, reason: '' });
+  check('사유 없으면 막힘', !r.ok && r.errors.reason === '교대 사유를 입력하세요.');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: coverP.id, reason: 'x'.repeat(101) });
+  check('사유 100자 넘으면 막힘', !r.ok && r.errors.reason.includes('100자'));
+  r = d.requestDutySwap({ kind: 'zzz', requester_duty: key(D), partner_id: coverP.id, reason: '면회' });
+  check('교대 방법 없으면 막힘', !r.ok && !!r.errors.kind);
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: '', reason: '면회' });
+  check('상대 없으면 막힘', !r.ok && r.errors.partner_id === '교대할 병사를 고르세요.');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: 'u01', reason: '면회' });
+  check('자기 자신과는 안 됨', !r.ok && r.errors.partner_id.includes('자기 자신'));
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: 'o01', reason: '면회' });
+  check('간부와는 안 됨', !r.ok && !!r.errors.partner_id);
+  r = d.requestDutySwap({ kind: 'swap', requester_duty: key(D), partner_id: swapP.id, partner_duty: null, reason: '면회' });
+  check('맞바꾸기인데 상대 근무 없으면 막힘', !r.ok && r.errors.partner_duty === '맞바꿀 상대의 근무를 고르세요.', JSON.stringify(r));
+  r = d.requestDutySwap({ kind: 'swap', requester_duty: key(D), partner_id: swapP.id, partner_duty: key(D), reason: '면회' });
+  check('상대 근무가 상대 것이 아니면 막힘', !r.ok && !!r.errors.partner_id, JSON.stringify(r));
+  const notMine = d.getDutyBoard(D.date)[0].slots.find((s) => s.user_id !== 'u01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: { post_id: d.getDutyBoard(D.date)[0].post_id, date: D.date, slot: notMine.slot }, partner_id: coverP.id, reason: '면회' });
+  check('내 근무가 아니면 막힘', !r.ok && r.errors.partner_id.includes('근무가 바뀌어'));
+  const busyP = busyOnD.find((id) => id && id !== 'u01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: busyP, reason: '면회' });
+  check('★ 상대가 그날 이미 근무면 막힘', !r.ok && r.errors.partner_id.includes('이미'), JSON.stringify(r));
+  const d1113 = myDuties.find((x) => x.date === '2026-11-13');
+  if (d1113) {
+    r = d.requestDutySwap({ kind: 'cover', requester_duty: key(d1113), partner_id: 'u05', reason: '면회' });
+    check('★ 상대가 그날 출타 중이면 막힘', !r.ok && r.errors.partner_id.includes('출타'), JSON.stringify(r));
+  }
+  const past = { ...key(D), date: '2026-10-19' };
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: past, partner_id: coverP.id, reason: '면회' });
+  check('지난 근무는 막힘', !r.ok && r.errors.partner_id.includes('한 달 이내'));
+  as('o01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: coverP.id, reason: '면회' });
+  check('간부는 요청 못 함', !r.ok && r.reason === 'forbidden');
+
+  // ── 대신 서기 요청 → 취소 ──
+  as('u01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: coverP.id, reason: '  가족 면회 ' });
+  check('★ 대신 서기 요청됨 (승인 대기)', r.ok && r.swap.status === 'pending' && r.swap.reason === '가족 면회' && r.swap.partner_duty === null, JSON.stringify(r));
+  const w1 = r.swap.id;
+  check('요청만으로는 근무가 안 바뀜', holder(D).user_id === 'u01');
+  check('★ 요청 중인 근무 표시', d.getPendingSwapFor(key(D))?.id === w1);
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D), partner_id: swapP.id, reason: '면회' });
+  check('★ 같은 근무로 두 번 요청 못 함', !r.ok && r.errors.partner_id.includes('승인 대기'));
+  check('요청자 내역에 있음 (role requester)', d.getDutySwaps()[0]?.id === w1 && d.getDutySwaps()[0].role === 'requester');
+  as(coverP.id);
+  check('★ 상대에게도 보임 (role partner)', d.getDutySwaps().some((x) => x.id === w1 && x.role === 'partner'));
+  r = d.cancelDutySwap(w1);
+  check('상대는 취소 못 함', !r.ok && r.reason === 'forbidden');
+  as(swapP.id);
+  check('관계없는 병사에겐 안 보임', !d.getDutySwaps().some((x) => x.id === w1));
+  as('u01');
+  r = d.cancelDutySwap(w1);
+  check('★ 요청자는 승인 전 취소', r.ok && d.getDutySwaps().find((x) => x.id === w1).status === 'cancelled');
+  check('취소하면 다시 요청 가능', !d.getPendingSwapFor(key(D)));
+  r = d.cancelDutySwap(w1);
+  check('이미 취소된 건 다시 취소 못 함', !r.ok && r.reason === 'already_decided');
+
+  // ── 맞바꾸기 요청 → 반려 ──
+  r = d.requestDutySwap({ kind: 'swap', requester_duty: key(D), partner_id: swapP.id, partner_duty: key(E), reason: '훈련 준비' });
+  check('★ 맞바꾸기 요청됨', r.ok && r.swap.partner_duty.date === E.date, JSON.stringify(r));
+  const w2 = r.swap.id;
+  check('상대 근무도 요청 중으로 묶임', d.getPendingSwapFor(key(E))?.id === w2);
+  r = d.decideDutySwap(w2, 'approve');
+  check('병사는 승인 못 함', !r.ok && r.reason === 'forbidden');
+  as('o01');
+  const pend = d.getDutySwaps().find((x) => x.id === w2);
+  check('간부: 승인 대기 맨 위, 문제 없음', d.getDutySwaps()[0].id === w2 && pend.problem === null && pend.requester_name === '김하늘');
+  r = d.decideDutySwap(w2, 'reject', '  ');
+  check('★ 반려 사유 없으면 막힘', !r.ok && r.errors.reject_reason === '반려 사유를 입력하세요.');
+  const logs = mockDb.audit_logs.length;
+  r = d.decideDutySwap(w2, 'reject', '그날 인원 조정 필요');
+  check('★ 반려됨 + 기록', r.ok && mockDb.audit_logs.length === logs + 1 && mockDb.audit_logs.at(-1).action === 'reject_duty_swap');
+  check('반려하면 근무 그대로', holder(D).user_id === 'u01' && holder(E).user_id === swapP.id);
+  r = d.decideDutySwap(w2, 'approve');
+  check('처리된 건은 다시 처리 못 함', !r.ok && r.reason === 'already_decided');
+  as('u01');
+  check('★ 요청자가 반려 사유를 봄', d.getDutySwaps().find((x) => x.id === w2).reject_reason === '그날 인원 조정 필요');
+
+  // ── 맞바꾸기 승인 ──
+  r = d.requestDutySwap({ kind: 'swap', requester_duty: key(D), partner_id: swapP.id, partner_duty: key(E), reason: '훈련 준비' });
+  const w3 = r.swap.id;
+  as('o01');
+  r = d.decideDutySwap(w3, 'approve');
+  check('★ 맞바꾸기 승인', r.ok, JSON.stringify(r));
+  check('★ D 근무는 상대에게, E 근무는 나에게 (출처 교대)', holder(D).user_id === swapP.id && holder(D).source === 'swap' && holder(E).user_id === 'u01' && holder(E).source === 'swap');
+  check('승인 기록', mockDb.audit_logs.at(-1).action === 'approve_duty_swap' && mockDb.duty_overrides.filter((o) => o.source === 'swap').length === 2);
+  as('u01');
+  check('★ 내 근무: D 없음, E 있음', !d.getMyDuties(D.date, D.date).length && d.getMyDuties(E.date, E.date).some((x) => x.source === 'swap'));
+  check('★ 내 달력에 E 근무', d.getCalendarEvents(E.date, E.date).some((e) => e.type === 'duty'));
+  r = d.applyLeave({ start_date: D.date, end_date: D.date, items: { annual: 1 } });
+  check('★ 교대 후 D날 휴가 신청 가능', r.ok, JSON.stringify(r));
+  d.cancelLeaveRequest(r.request?.id);
+  r = d.applyLeave({ start_date: E.date, end_date: E.date, items: { annual: 1 } });
+  check('E날은 이제 막힘', !r.ok && r.errors.dates.includes('먼저 근무를 교대하세요'));
+  as(swapP.id);
+  check('★ 상대 달력에 D 근무', d.getCalendarEvents(D.date, D.date).some((e) => e.type === 'duty'));
+
+  // ── 승인할 때 다시 확인 (그사이 상대가 출타 신청) ──
+  as('u01');
+  const D2 = d.getMyDuties(win.start, win.end).find((x) => x.date > win.start && !FULL.includes(x.date) && x.date !== E.date && x.date !== D.date);
+  const busy2 = d.getDutyBoard(D2.date).flatMap((p) => p.slots.map((s) => s.user_id));
+  const cover2 = soldiers.find((x) => !busy2.includes(x.id) && freeOn(x.id, D2.date) && x.id !== swapP.id);
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D2), partner_id: cover2.id, reason: '외래 진료' });
+  const w4 = r.swap.id;
+  check('대신 서기 요청 2', r.ok);
+  as(cover2.id);
+  const lv = d.applyLeave({ start_date: D2.date, end_date: D2.date, items: { annual: 1 } });
+  check('(상대가 그날 휴가 신청)', lv.ok, JSON.stringify(lv));
+  as('o01');
+  const p4 = d.getDutySwaps().find((x) => x.id === w4);
+  check('★ 간부 목록에 "승인할 수 없음" 이유', p4.problem && p4.problem.includes('출타'), p4.problem);
+  r = d.decideDutySwap(w4, 'approve');
+  check('★ 승인 막힘 (stale)', !r.ok && r.reason === 'stale' && r.message.includes('출타'));
+  check('근무 그대로', holder(D2).user_id === 'u01');
+  r = d.decideDutySwap(w4, 'reject', '상대 휴가');
+  check('반려는 가능', r.ok);
+  // 간부 손 수정으로 근무가 바뀐 경우도
+  as(cover2.id); d.cancelLeaveRequest(lv.request.id);
+  as('u01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D2), partner_id: cover2.id, reason: '외래 진료' });
+  const w5 = r.swap.id;
+  as('o01');
+  const sub = d.getDutyCandidates(D2.post_id, D2.date, D2.slot).find((c) => !c.current && !c.blocked && c.id !== cover2.id);
+  d.setDutyOverride({ post_id: D2.post_id, date: D2.date, slot: D2.slot, user_id: sub.id });
+  r = d.decideDutySwap(w5, 'approve');
+  check('★ 손 수정으로 근무가 바뀌면 승인 막힘', !r.ok && r.reason === 'stale' && r.message.includes('근무가 바뀌어'), JSON.stringify(r));
+  d.decideDutySwap(w5, 'reject', '근무자 바뀜');
+  d.clearDutyOverride({ post_id: D2.post_id, date: D2.date, slot: D2.slot });
+
+  // ── 대신 서기 승인 ──
+  as('u01');
+  r = d.requestDutySwap({ kind: 'cover', requester_duty: key(D2), partner_id: cover2.id, reason: '외래 진료' });
+  const w6 = r.swap.id;
+  as('o01');
+  r = d.decideDutySwap(w6, 'approve');
+  check('★ 대신 서기 승인 → 상대가 섬', r.ok && holder(D2).user_id === cover2.id && holder(D2).source === 'swap');
+  check('간부 내역: 처리한 간부 이름', d.getDutySwaps().find((x) => x.id === w6).decided_by_name === mockDb.profiles.find((p) => p.id === 'o01').name);
+  d.signOut();
+
+  // ── 고를 수 있는 것만 (설 수 없는 사람 숨기기) ──
+  as('u01');
+  const Dx = d.getMyDuties(win.start, win.end).find((x) => x.date > win.start && !FULL.includes(x.date) && !d.getPendingSwapFor(x));
+  const ch = d.getSwapChoices({ post_id: Dx.post_id, date: Dx.date, slot: Dx.slot });
+  const busyX = d.getDutyBoard(Dx.date).flatMap((p) => p.slots.map((s) => s.user_id));
+  check('★ 교대 상대 목록: 그날 근무가 있는 병사는 빠짐', ch.length > 0 && ch.every((p) => !busyX.includes(p.id)));
+  check('★ 상대 근무 목록: 내가 설 수 없는 날(내 근무 날)은 빠짐', ch.every((p) => p.duties.every((x) => !d.getMyDuties(x.date, x.date).length || x.date === Dx.date)));
+  check('상대 근무 목록은 정말 맞바꿀 수 있는 것만', ch.flatMap((p) => p.duties.map((x) => [p.id, x])).every(([pid, x]) => !d.getPendingSwapFor(x)));
+  if (FULL.some((x) => x <= win.end)) {
+    const d13 = d.getMyDuties('2026-11-13', '2026-11-13')[0];
+    if (d13) check('그날 출타 중인 병사는 빠짐', !d.getSwapChoices(d13).some((p) => p.id === 'u05'));
+  }
+  const theirSlot = d.getDutyBoard(Dx.date)[0].slots.find((s) => s.user_id !== 'u01');
+  const mc = d.getMySwapChoices({ post_id: d.getDutyBoard(Dx.date)[0].post_id, date: Dx.date, slot: theirSlot.slot });
+  check('근무표에서: 상대 이름과 맞바꿀 수 있는 내 근무', mc.partner.id === theirSlot.user_id && mc.duties.length > 0 && mc.duties.every((x) => d.getMyDuties(x.date, x.date).some((m) => m.slot === x.slot && m.post_id === x.post_id)) && mc.duties.some((x) => x.date === Dx.date), '같은 날 다른 시간대끼리도 맞바꿀 수 있음');
+  check('내 근무에는 근무표 교대 없음', d.getMySwapChoices({ post_id: Dx.post_id, date: Dx.date, slot: Dx.slot }) === null);
+  as('o01');
+  check('간부는 고를 목록 없음', d.getSwapChoices(Dx).length === 0 && d.getMySwapChoices(Dx) === null);
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?w=${Math.random()}${hash}`; });
+  const $ = (q) => f.contentDocument.querySelector(q);
+  const $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  await open('u01', '#apply/duty');
+  let dlg = $('#duty-dialog');
+  const fm = () => dlg.querySelector('form');
+  const fd = await f.contentWindow.Function('return import("./js/data.js")')();
+  check('병사: 교대 요청 내역 (처음엔 없음)', $('.swap-head h3').textContent === '교대 요청 내역' && $$('.swap-item').length === 0);
+  // 1) 내 근무 달력에서: 교대 방법 고르기 없이 병사 → 상대 근무 또는 대신 서기
+  const day = $$('.duty-cal-day.has-duty:not(:disabled)').find((x) => !FULL.includes(x.dataset.date));
+  const dayDate = day.dataset.date;
+  day.click(); await wait(40);
+  const ask = $('.duty-cal-line [data-swap-for]');
+  check('★ 근무 날을 누르면 "교대 요청" 버튼', !!ask);
+  ask.click(); await wait(40);
+  check('★ 요청 창: 교대 방법 고르기 없음', dlg.open && $('.swap-target').textContent.includes('내 근무') && !fm().querySelector('input[name="kind"]'));
+  check('병사를 고르기 전 상대 근무 안내', fm().elements.partner_duty.options[0].textContent === '먼저 병사를 고르세요');
+  const busyDay = fd.getDutyBoard(dayDate).flatMap((p) => p.slots.map((s) => s.user_id));
+  const listed = [...fm().elements.partner_id.options].map((o) => o.value).filter(Boolean);
+  check('★ 화면: 그날 근무가 있는 병사는 목록에 없음', listed.length > 0 && listed.every((id) => !busyDay.includes(id)));
+  fm().requestSubmit(); await wait(40);
+  check('빈칸 안내 (병사)', !$('[data-error-for="partner_id"]').hidden && dlg.open);
+  // 맞바꿀 근무가 있는 병사를 고르면 근무 목록 + 마지막에 "대신 서기"
+  const withDuty = listed.find((id) => fd.getSwapChoices(fd.getMyDuties(dayDate, dayDate)[0]).find((p) => p.id === id)?.duties.length);
+  fm().elements.partner_id.value = withDuty;
+  fm().elements.partner_id.dispatchEvent(new Event('change', { bubbles: true }));
+  const opts = [...fm().elements.partner_duty.options];
+  check('★ 병사를 고르면 맞바꿀 근무 + "맞바꿀 근무 없음 (대신 서기)"', opts.length >= 2 && opts.at(-1).value === 'cover' && opts[0].value.includes('|') && $('.swap-kind-help').textContent.includes('서로 바꿔'));
+  fm().elements.partner_duty.value = 'cover';
+  fm().elements.partner_duty.dispatchEvent(new Event('change', { bubbles: true }));
+  check('대신 서기를 고르면 설명이 바뀜', $('.swap-kind-help').textContent.includes('대신 섭니다'));
+  fm().requestSubmit(); await wait(40);
+  check('사유 없으면 안내', !$('[data-error-for="reason"]').hidden && dlg.open);
+  fm().elements.reason.value = '가족 면회';
+  fm().requestSubmit(); await wait(60);
+  check('★ 대신 서기 요청 → 내역에 "승인 대기"', !dlg.open && $$('.swap-item').length === 1 && $('.swap-item .status-badge').textContent === '승인 대기' && $('.swap-item').textContent.includes('대신 서기'));
+  check('달력 그날에 "교대 요청 중"', $('.duty-cal-line .status-badge')?.textContent === '교대 요청 중' && !$('.duty-cal-line [data-swap-for]'));
+  check('요청 뒤 초점은 내역 제목', f.contentDocument.activeElement === $('.swap-head h3'));
+  // 2) 근무표에서: 다른 병사 근무 옆 "교대" → 내 근무만 고르고 사유
+  let boardDay = null;
+  for (let i = 0; i < 6; i++) {
+    $('[data-action="duty-next"]').click(); await wait(30);
+    if ($('[data-swap-with]')) { boardDay = $('.duty-date').textContent; break; }
+  }
+  check('★ 근무표: 다른 병사 근무 옆에 "교대", 내 근무엔 없음', !!boardDay && !$('.duty-slot.mine [data-swap-with]'));
+  const swBtn = $('[data-swap-with]');
+  const swName = swBtn.closest('.duty-slot').querySelector('.duty-slot-name').textContent;
+  swBtn.click(); await wait(40);
+  check('★ 근무표 요청 창: 상대 근무가 정해져 있고 내 근무만 고름', dlg.open && $('.swap-target').textContent.includes(swName) && fm().elements.requester_duty.options.length > 0 && !fm().elements.partner_id);
+  fm().elements.reason.value = '훈련 준비';
+  fm().requestSubmit(); await wait(60);
+  check('★ 근무표에서 맞바꾸기 요청 → 내역 2건', !dlg.open && $$('.swap-item').length === 2 && $$('.swap-item').some((x) => x.textContent.includes('↔')), $$('.swap-item').map((x) => x.textContent).join(' / '));
+  // 취소
+  f.contentWindow.confirm = () => true;
+  $('.swap-item .danger').click(); await wait(50);
+  check('★ 화면: 요청 취소 → "취소"', $$('.swap-item .status-badge').some((x) => x.textContent === '취소'));
+  check('360px 가로 넘침 없음 (병사)', f.contentDocument.documentElement.scrollWidth <= 360);
+
+  // 간부: 승인 대기 건을 만들어 두고 화면에서 승인·반려
+  await open('o01', '#apply/duty');
+  dlg = $('#duty-dialog');
+  const od = await f.contentWindow.Function('return import("./js/data.js")')();
+  const { mockDb: odb } = await f.contentWindow.Function('return import("./js/mock-data.js")')();
+  const u01d = od.getSoldierDuties('u01').filter((x) => x.date > win.start && !FULL.includes(x.date));
+  const pickFree = (date) => odb.profiles.filter((p) => p.role === 'soldier' && p.is_active && p.id !== 'u01').map((p) => p.id).find((id) => !od.getSoldierDuties(id).some((x) => x.date === date));
+  const mk = (id, duty, partner) => odb.duty_swaps.push({ id, kind: 'cover', requester_id: 'u01', requester_duty: { post_id: duty.post_id, date: duty.date, slot: duty.slot }, partner_id: partner, partner_duty: null, reason: '면회', status: 'pending', reject_reason: null, decided_by: null, requested_at: new Date().toISOString(), decided_at: null });
+  mk('w91', u01d[0], pickFree(u01d[0].date));
+  mk('w92', u01d[1], pickFree(u01d[1].date));
+  f.contentWindow.location.hash = '#apply/leave'; await wait(60);
+  f.contentWindow.location.hash = '#apply/duty'; await wait(60);
+  check('간부: 교대 요청 제목, 승인 대기 2건', $('.swap-head h3').textContent === '교대 요청' && $$('.swap-pending .swap-item').length === 2);
+  check('간부: 요청에 승인·반려 버튼', !!$('.swap-pending .swap-item .approve') && !!$('.swap-pending .swap-item .danger'));
+  $('[data-swap-id="w91"] .approve').click(); await wait(60);
+  check('★ 화면: 승인 → 교대 내역으로', $$('.swap-pending .swap-item').length === 1 && $('.swap-done [data-swap-id="w91"] .status-badge').textContent === '승인');
+  $('[data-swap-id="w92"] .danger').click(); await wait(40);
+  check('반려 창 열림', dlg.open && $('.swap-target').textContent.includes('김하늘'));
+  fm().requestSubmit(); await wait(40);
+  check('반려 사유 없으면 안내', dlg.open && !$('[data-error-for="reject_reason"]').hidden);
+  fm().elements.reject_reason.value = '인원 부족';
+  fm().requestSubmit(); await wait(60);
+  check('★ 화면: 반려 → 내역에 반려 사유', !dlg.open && $('[data-swap-id="w92"] .swap-reject').textContent === '반려 사유: 인원 부족' && $('.swap-pending') === null);
+  check('360px 가로 넘침 없음 (간부)', f.contentDocument.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

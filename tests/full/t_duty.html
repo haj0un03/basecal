@@ -1,0 +1,119 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2600px;border:0"></iframe>
+<script type="module">
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  // ── 데이터 계층 (가상 근무지: 불침번 1~4번초 10명, 기준일 10/19. 위병소는 11/7에 뺌) ──
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  const NOW = new Date(2026, 9, 24, 9).getTime();
+  const slotsOn = (date, post) => d.getDutyBoard(date).find((p) => p.post_name === post)?.slots ?? [];
+
+  check('들어오기 전엔 근무표 없음', d.getDutyBoard('2026-10-19').length === 0);
+  as('u01');
+  const mine = d.getMyDuties('2026-10-19', '2026-10-31').map((x) => `${x.date.slice(5)} ${x.post_name} ${x.label}`);
+  check('★ 김하늘 근무: 순번대로 이틀·사흘 간격', mine.join() === '10-19 불침번 1번초,10-21 불침번 3번초,10-24 불침번 1번초,10-26 불침번 3번초,10-29 불침번 1번초,10-31 불침번 3번초', mine.join());
+  check('기준일 첫날: 명단 1~4번', slotsOn('2026-10-19', '불침번').map((s) => s.name).join() === '김하늘,이바다,박가온,최나래');
+  check('다음 날은 이어지는 순번 (5~8번)', slotsOn('2026-10-20', '불침번').map((s) => s.user_id).join() === 'u09,u10,u11,u12');
+  check('명단 끝이면 처음으로', slotsOn('2026-10-21', '불침번').map((s) => s.user_id).join() === 'u13,u14,u01,u02');
+  check('위병소는 없음 (11/7 뺌)', d.getDutyBoard('2026-10-19').map((p) => p.post_name).join() === '불침번');
+  check('기준일 전에는 근무 없음', slotsOn('2026-10-18', '불침번').length === 0);
+  // 11/6: 4번초 순번은 임도담(u10)인데 11/5~6 휴가 → 그날 순번에 없는 다음 사람(u11)
+  const s116 = slotsOn('2026-11-06', '불침번');
+  check('★ 휴가 중인 사람은 건너뛰고 다음 사람이 대신 섬', s116.map((s) => s.user_id).join() === 'u03,u04,u09,u11' && s116[3].source === 'substitute', s116.map((s) => s.user_id + s.source).join());
+  check('★ 다른 날 순번은 밀리지 않음', slotsOn('2026-11-07', '불침번').map((s) => s.user_id).join() === 'u11,u12,u13,u14');
+  const ev = d.getCalendarEvents('2026-10-24', '2026-10-24').find((e) => e.type === 'duty');
+  check('★ 달력에 "불침번 1번초" 근무 (고칠 수 없음)', ev && ev.title === '불침번 1번초' && ev.kind === 'duty' && ev.editable === false, JSON.stringify(ev));
+  check('병사는 근무지를 못 만듦', d.saveDutyPost({ name: 'x', slots: 'a', roster: ['u01'] }, NOW).reason === 'forbidden');
+  check('병사는 근무지를 못 없앰', d.deleteDutyPost('d01', NOW).reason === 'forbidden');
+  as('u02');
+  check('다른 병사도 근무표를 봄 (이름 포함)', slotsOn('2026-10-19', '불침번')[0].name === '김하늘');
+
+  as('o01');
+  const err = (input) => d.saveDutyPost(input, NOW).errors ?? {};
+  check('입력 오류: 이름·시간대·명단', Object.keys(err({ name: '', slots: '', roster: [] })).sort().join() === 'name,roster,slots');
+  check('같은 이름 근무지 불가', err({ name: '불침번', slots: 'a', roster: ['u05'] }).name?.includes('같은 이름'));
+  check('시간대 9개 불가', err({ name: 'x', slots: '1,2,3,4,5,6,7,8,9', roster: ['u05'] }).slots?.includes('8개'));
+  check('시간대 이름 11자 불가', !!err({ name: 'x', slots: '가'.repeat(11), roster: ['u05'] }).slots);
+  check('같은 시간대 이름 불가', err({ name: 'x', slots: 'a, a', roster: ['u05', 'u06'] }).slots?.includes('같은 이름'));
+  check('★ 명단이 시간대보다 적으면 불가', err({ name: 'x', slots: '1번초, 2번초, 3번초', roster: ['u05', 'u06'] }).roster?.includes('3명 이상'));
+  check('간부·중복은 명단에 못 넣음', !!err({ name: 'x', slots: 'a', roster: ['o01'] }).roster && !!err({ name: 'x', slots: 'a', roster: ['u05', 'u05'] }).roster);
+  let r = d.saveDutyPost({ name: ' 당직 ', slots: '1번초, 2번초', roster: ['u05', 'u06', 'u07'] }, NOW);
+  check('★ 간부가 근무지 추가 (오늘부터 1번)', r.ok && r.post.name === '당직' && r.post.slots.join() === '1번초,2번초' && r.post.start_date === '2026-10-24' && r.post.roster.map((x) => x.name).join() === '정다온,강보람,조새벽', JSON.stringify(r.post));
+  const dangId = r.post.id;
+  check('새 근무지 근무표: 오늘 정다온·강보람, 내일 조새벽·정다온', slotsOn('2026-10-24', '당직').map((s) => s.user_id).join() === 'u05,u06' && slotsOn('2026-10-25', '당직').map((s) => s.user_id).join() === 'u07,u05');
+  check('변경 기록', mockDb.audit_logs.some((a) => a.action === 'create_duty_post' && a.target_id === dangId));
+  r = d.saveDutyPost({ id: 'd01', name: '불침번(본관)', slots: '1번초, 2번초, 3번초, 4번초', roster: mockDb.duty_rosters.filter((x) => x.post_id === 'd01').sort((a, b) => a.order - b.order).map((x) => x.user_id) }, NOW);
+  check('이름만 바꾸면 순번 그대로', r.ok && r.post.start_date === '2026-10-19' && slotsOn('2026-10-21', '불침번(본관)').map((s) => s.user_id).join() === 'u13,u14,u01,u02');
+  r = d.saveDutyPost({ id: 'd01', name: '불침번', slots: '1번초, 2번초', roster: ['u02', 'u01', 'u03'] }, NOW);
+  check('★ 명단을 바꾸면 오늘부터 새 명단 1번', r.ok && r.post.start_date === '2026-10-24' && slotsOn('2026-10-24', '불침번').map((s) => s.user_id).join() === 'u02,u01');
+  check('바꾼 뒤 그 전 날짜는 근무 없음', slotsOn('2026-10-23', '불침번').length === 0);
+  check('변경 기록 (수정)', mockDb.audit_logs.filter((a) => a.action === 'update_duty_post' && a.target_id === 'd01').length === 2);
+  check('없앰', d.deleteDutyPost(dangId, NOW).ok && !d.getDutyBoard('2026-10-24').some((p) => p.post_name === '당직') && mockDb.audit_logs.some((a) => a.action === 'delete_duty_post'));
+  check('없앤 근무지 다시 없애기', d.deleteDutyPost(dangId, NOW).reason === 'not_found');
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const open = (id, hash) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', `"${id}"`); f.onload = () => setTimeout(res, 300); f.src = `index.html?u=${id}${Math.random()}${hash}`; });
+  await open('u01', '#apply/duty');
+  let doc = f.contentDocument;
+  let $ = (q) => f.contentDocument.querySelector(q);
+  let $$ = (q) => [...f.contentDocument.querySelectorAll(q)];
+  check('신청 탭: 근무 교대 탭만 보임', $$('.subtab').map((h) => h.textContent).join() === '휴가,근무 교대,시설' && $$('.view h2').map((h) => h.textContent).join() === '근무 교대');
+  const myItems = $$('.duty-cal-day.has-duty');
+  check('★ 병사: 내 근무 달력', myItems.length > 0 && myItems[0].getAttribute('aria-label').includes('불침번') && myItems[0].querySelector('.duty-cal-tag').textContent === '근무', myItems.length);
+  check('병사: 근무표에 불침번', $$('.duty-post-name').map((x) => x.textContent).join() === '불침번');
+  check('병사: 근무지 추가 버튼 없음', !$('[data-action="add-duty-post"]'));
+  const firstDate = $('.duty-date').textContent;
+  $('[data-action="duty-next"]').click(); await wait(30);
+  check('근무표 다음 날로', $('.duty-date').textContent !== firstDate && !!$('[data-action="duty-today"]') && doc.activeElement === $('[data-action="duty-next"]'));
+  $('[data-action="duty-today"]').click(); await wait(30);
+  check('오늘로 돌아옴', $('.duty-date').textContent === firstDate);
+  const myDate = myItems[0].dataset.date;
+  // 달력 탭에 근무 막대
+  f.contentWindow.location.hash = '#calendar'; await wait(80);
+  const [y, m] = myDate.split('-').map(Number);
+  for (let i = 0; i < 3 && $('.cal-title').textContent.trim() !== `${y}년 ${m}월`; i++) { $('[data-action="next"]').click(); await wait(30); }
+  check('★ 달력 탭에 근무 막대 (근무 색)', $$('.cal-bar').some((b) => b.textContent.startsWith('불침번') && b.classList.contains('type-duty') && b.dataset.start === myDate));
+  $(`.cal-day[data-date="${myDate}"]`).click(); await wait(30);
+  const evItem = $$('.cal-event').find((x) => x.querySelector('.cal-event-title').textContent.startsWith('불침번'));
+  check('목록: "근무" 글자, 수정·삭제 버튼 없음', evItem?.querySelector('.type-badge').textContent === '근무' && !evItem.querySelector('.small-button'));
+  check('360px 가로 넘침 없음 (병사)', doc.documentElement.scrollWidth <= 360);
+
+  await open('o01', '#apply/duty');
+  doc = f.contentDocument;
+  check('간부: 근무지 목록 1개', $$('.duty-post-list .grant-item').length === 1 && $('.duty-post-list .grant-meta').textContent.includes('순번 10명: 김하늘 → 이바다'));
+  check('간부: 내 근무 달력은 없음', !$('.duty-cal'));
+  $('[data-action="add-duty-post"]').click(); await wait(30);
+  const dlg = $('#duty-dialog'), fm = () => $('#duty-dialog form');
+  check('근무지 추가 창', dlg.open && $('#duty-dialog h2').textContent === '근무지 추가' && doc.activeElement === fm().elements.name);
+  fm().requestSubmit(); await wait(30);
+  check('빈 칸이면 안내', !$('[data-error-for="name"]').hidden && !$('[data-error-for="slots"]').hidden && !$('[data-error-for="roster"]').hidden && dlg.open);
+  fm().elements.name.value = '당직'; fm().elements.slots.value = '1번초, 2번초';
+  const addSoldier = async (id) => { fm().elements.add_soldier.value = id; $('[data-action="roster-add"]').click(); await wait(20); };
+  await addSoldier('u05');
+  fm().requestSubmit(); await wait(30);
+  check('명단이 모자라면 안내', $('[data-error-for="roster"]').textContent.includes('2명 이상'));
+  await addSoldier('u06'); await addSoldier('u07');
+  check('명단에 넣은 병사는 고르기 목록에서 빠짐', ![...fm().elements.add_soldier.options].some((o) => ['u05', 'u06', 'u07'].includes(o.value)));
+  $('[data-roster-down="0"]').click(); await wait(20);
+  check('↓로 순서 바꾸기', $$('.roster-edit-name').map((x) => x.textContent.split(' · ')[0]).join() === '1. 강보람,2. 정다온,3. 조새벽' && doc.activeElement === $('[data-roster-down="1"]'));
+  $$('.roster-edit-item')[2].querySelector('.danger').click(); await wait(20);
+  check('빼기', $$('.roster-edit-item').length === 2);
+  fm().requestSubmit(); await wait(50);
+  check('★ 저장하면 목록·근무표에 당직', !dlg.open && $$('.duty-post-list .grant-item').length === 2 && $$('.duty-post-name').map((x) => x.textContent).includes('당직'));
+  const dang = $$('.duty-post').find((x) => x.querySelector('.duty-post-name').textContent === '당직');
+  check('오늘 당직: 강보람·정다온', [...dang.querySelectorAll('.duty-slot-name')].map((x) => x.textContent).join() === '강보람,정다온');
+  f.contentWindow.confirm = () => true;
+  $$('.duty-post-list .grant-item').find((x) => x.textContent.includes('당직')).querySelector('.danger').click(); await wait(50);
+  check('삭제', $$('.duty-post-list .grant-item').length === 1 && !$$('.duty-post-name').some((x) => x.textContent === '당직'));
+  check('360px 가로 넘침 없음 (간부)', doc.documentElement.scrollWidth <= 360);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

@@ -1,0 +1,131 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:2600px;border:0"></iframe>
+<script type="module">
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  // ── 데이터 계층 (2026-10-24 기준) ──
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const NOW = new Date(2026, 9, 24, 9).getTime();
+  const as = (id) => { d.signOut(); d.signIn(mockDb.profiles.find((p) => p.id === id).name, codeOf(id)); };
+  const slot = (date, kind = 'leave') => d.getDayAvailability(kind, date, date)[0];
+  const apply = (id, s, e, n) => { as(id); return d.applyLeave({ start_date: s, end_date: e, items: { annual: n } }, NOW); };
+  let extra = 0;
+  const addAbsence = (user, kind, date) => { mockDb.leave_requests.push({ id: `rx${++extra}`, user_id: user, kind, event_id: null, start_date: date, end_date: date, status: 'requested', requested_at: '', cancelled_at: null }); };
+
+  as('o01');
+  const st = d.getRateSettings();
+  check('설정: 병사 20명, 총 출타 35%·휴가 20%', st.soldiers === 20 && JSON.stringify(st.defaults) === '{"total":35,"leave":20}', JSON.stringify(st.defaults));
+  let s12 = slot('2026-11-12');
+  check('정원: 총 7명(20×35%=7), 휴가 4명', s12.total.capacity === 7 && s12.leave.capacity === 4);
+  check('11/12 휴가 4명 → 휴가 마감', s12.leave.count === 4 && s12.full && s12.remaining === 0);
+  check('★ 휴가는 총 출타에 포함: 총 4/7', s12.total.count === 4 && s12.total.remaining === 3);
+  const o12 = slot('2026-11-12', 'overnight');
+  check('★ 외박은 총 출타만 봄: 3자리', o12.remaining === 3 && !o12.full);
+  check('11/5: 휴가 1명 → 휴가 남은 3자리(총은 6)', slot('2026-11-05').remaining === 3 && slot('2026-11-05').total.remaining === 6);
+  as('u01');
+  check('병사는 현황·설정 못 봄', d.getAbsenceRoster('2026-11-12', '2026-11-12').length === 0 && d.getRateSettings() === null && d.setDefaultRates({ total: 50 }).reason === 'forbidden');
+  let r = apply('u01', '2026-11-11', '2026-11-14', 4);
+  check('★ 휴가 마감된 날이 끼면 신청 불가', r.errors?.dates?.endsWith('11/12, 11/13'), r.errors?.dates);
+  // 총 출타를 채우는 외박 3명 → 11/14: 휴가 0명이지만 총 출타가 차면 휴가도 불가
+  ['u11', 'u12', 'u13', 'u14', 'u15', 'u16', 'u17'].forEach((u) => addAbsence(u, 'overnight', '2026-11-14'));
+  check('★ 외박 7명으로 총 출타 7/7 → 휴가 0명이어도 휴가 마감', slot('2026-11-14').leave.count === 0 && slot('2026-11-14').full && slot('2026-11-14', 'outing').full);
+  check('총 출타가 차면 휴가 신청 막음', apply('u01', '2026-11-14', '2026-11-14', 1).reason === 'invalid');
+  mockDb.leave_requests.splice(-7);
+  // 휴가 3 + 외박 4 = 총 7 → 휴가 정원은 남아도 총이 차서 막힘
+  ['u11', 'u12', 'u13', 'u14'].forEach((u) => addAbsence(u, 'overnight', '2026-11-15'));
+  check('외박 4명 → 휴가는 min(4, 3)=3자리', slot('2026-11-15').remaining === 3);
+  check('휴가 3명 신청', apply('u01', '2026-11-15', '2026-11-15', 1).ok && apply('u02', '2026-11-15', '2026-11-15', 1).ok && apply('u03', '2026-11-15', '2026-11-15', 1).ok);
+  check('★ 휴가 3/4지만 총 7/7 → 4번째 휴가 불가', slot('2026-11-15').leave.remaining === 1 && slot('2026-11-15').full && apply('u04', '2026-11-15', '2026-11-15', 1).reason === 'invalid');
+
+  as('o01');
+  const roster = d.getAbsenceRoster('2026-11-15', '2026-11-15')[0];
+  check('현황: 총 7/7 마감, 휴가 3/4', roster.totalFull && !roster.leaveFull && roster.total.count === 7 && roster.leave.count === 3);
+  check('명단: 휴가 먼저, 종류 표시', roster.people.length === 7 && roster.people[0].kind === 'leave' && roster.people.filter((p) => p.kind === 'overnight').length === 4);
+  check('입력 오류: 빈칸·101·글자', ['', '101', 'abc'].every((v) => d.setDefaultRates({ total: v, leave: '20' }).errors?.total));
+  let e = d.setDefaultRates({ total: '20', leave: '30' });
+  check('★ 휴가 > 총 출타면 저장 막음', e.reason === 'invalid' && e.errors.leave.includes('클 수 없습니다') && d.getRateSettings().defaults.total === 35);
+  const logs = mockDb.audit_logs.length;
+  r = d.setDefaultRates({ total: '40', leave: '23' });
+  check('40%·23% → 총 8명, 휴가 4.6 → 4명(소수점 버림)', r.ok && JSON.stringify(r.changed) === '["total","leave"]' && slot('2026-11-20').total.capacity === 8 && slot('2026-11-20').leave.capacity === 4);
+  check('바꾼 것만 기록(2건)', mockDb.audit_logs.length === logs + 2);
+  r = d.setDefaultRates({ total: '40', leave: '23' });
+  check('같은 값이면 바뀐 것 없음', r.ok && r.changed.length === 0 && mockDb.audit_logs.length === logs + 2);
+  check('총 출타만 낮추기(휴가 23 > 20)는 막음', d.setDefaultRates({ total: '20' }).errors?.leave);
+  d.setDefaultRates({ total: '10', leave: '10' });
+  check('★ 총 10%(2명)로 낮추면 11/15(7명) 초과, 기존 신청 그대로', d.getAbsenceRoster('2026-11-15', '2026-11-15')[0].over && mockDb.leave_requests.filter((x) => x.start_date === '2026-11-15' && x.status === 'requested').length === 7);
+  d.setDefaultRates({ total: '35', leave: '20' });
+  r = d.addRatePeriod({ kind: 'total', start_date: '2026-11-16', end_date: '2026-11-20', rate: '0' });
+  check('★ 기간별 총 출타 0% → 휴가·외박 모두 마감', r.ok && slot('2026-11-18').full && slot('2026-11-18', 'overnight').full && slot('2026-11-18').leave.capacity === 4);
+  const p50 = d.addRatePeriod({ kind: 'leave', start_date: '2026-11-21', end_date: '', rate: '50' }).period;
+  check('기간별 휴가 50%(10명)여도 총 35%(7명) 넘지 않음', slot('2026-11-21').leave.capacity === 10 && slot('2026-11-21').remaining === 7);
+  check('기간 오류: 종류 없음', !!d.addRatePeriod({ kind: 'overnight', start_date: '2026-11-21', rate: '1' }).errors?.kind);
+  d.deleteRatePeriod(r.period.id); d.deleteRatePeriod(p50.id);
+  check('기간 지우면 기본값으로', slot('2026-11-18').total.capacity === 7 && !slot('2026-11-18').full);
+  mockDb.leave_requests.splice(mockDb.leave_requests.findIndex((x) => x.id === 'rx8'), 4);
+  d.signOut();
+
+  // ── 화면 ──
+  const f = document.getElementById('f');
+  const loadAs = (id) => new Promise((res) => { localStorage.clear(); localStorage.setItem('basecal.session', JSON.stringify(id)); f.onload = () => setTimeout(res, 300); f.src = `index.html?q=${id}${Math.random()}#apply`; });
+  await loadAs('u01');
+  let doc = f.contentDocument, w = f.contentWindow;
+  let $ = (q) => doc.querySelector(q);
+  let $$ = (q) => [...doc.querySelectorAll(q)];
+  const fd = await import('./js/data.js?frame-q2');
+  const win = fd.getApplyWindow();
+  const goMonth = async (prefix, date) => { const [y, m] = date.split('-').map(Number); for (let i = 0; i < 4; i++) { const box = prefix === 'apply' ? $('.apply-box:not(.roster-box)') : $('.roster-box'); const [cy, cm] = box.querySelector('.apply-month').textContent.match(/\d+/g).map(Number); if (cy === y && cm === m) return; box.querySelector(`[data-action="${prefix}-${cy * 12 + cm < y * 12 + m ? 'next' : 'prev'}"]`).click(); await wait(30); } };
+  if ('2026-11-12' <= win.end) {
+    await goMonth('apply', '2026-11-12');
+    const c = (date) => $(`.apply-box:not(.roster-box) .apply-day[data-date="${date}"]`);
+    check('병사: 11/12 휴가 마감', c('2026-11-12').classList.contains('full') && c('2026-11-12').querySelector('.apply-seats').textContent === '마감');
+    if ('2026-11-05' >= win.start) check('병사: 11/5 3자리(휴가 기준)', c('2026-11-05').querySelector('.apply-seats').textContent === '3자리');
+  }
+  check('병사에겐 출타 현황 달력 없음', !$('.roster-box'));
+
+  await loadAs('o01');
+  doc = f.contentDocument; w = f.contentWindow; $ = (q) => doc.querySelector(q); $$ = (q) => [...doc.querySelectorAll(q)];
+  const rf = () => $('.rate-form');
+  check('간부: 출타율 두 칸(총 출타·휴가)', $$('.rate-row .rate-kind').map((x) => x.textContent).join() === '총 출타,휴가' && rf().elements.total.value === '35' && rf().elements.leave.value === '20');
+  check('정원 미리보기 7명·4명', $$('.rate-capacity').map((x) => x.textContent).join() === '→ 하루 7명,→ 하루 4명');
+  check('휴가가 총 출타에 포함된다는 안내', $$('.leave-section .help').some((p) => p.textContent.includes('휴가는 총 출타에 포함')));
+  rf().elements.leave.value = '40'; rf().requestSubmit(); await wait(30);
+  check('★ 화면: 휴가 > 총 출타면 저장 막고 안내', !$('.rate-form .form-error').hidden && $('.rate-form .form-error').textContent.startsWith('휴가:'));
+  rf().elements.leave.value = '20';
+  check('출타 현황 달력', !!$('.roster-box') && $('.roster-box .apply-title').textContent === '출타 현황');
+  check('★ 순서: 출타 현황 → 출타율 → 기간별 출타율', !!($('.roster-box').compareDocumentPosition($('.rate-form')) & Node.DOCUMENT_POSITION_FOLLOWING) && !!($('.rate-form').compareDocumentPosition($('[data-action="add-period"]')) & Node.DOCUMENT_POSITION_FOLLOWING));
+  check('처음엔 오늘 선택, 명단 영역', $('.roster-day.selected')?.dataset.date === win.start && !!$('.roster-detail h4'));
+  if ('2026-11-12' >= win.start) {
+    await goMonth('roster', '2026-11-12');
+    const rc = (date) => $(`.roster-day[data-date="${date}"]`);
+    check('11/12 칸: 휴가마감', rc('2026-11-12').querySelector('.apply-seats')?.textContent === '휴가마감');
+    check('11/5 칸: 1명', rc('2026-11-05').querySelector('.apply-seats')?.textContent === '1명');
+    check('아무도 없는 날은 숫자 없음', !rc('2026-11-20').querySelector('.apply-seats'));
+    rc('2026-11-12').click(); await wait(30);
+    check('★ 날짜 누르면 인원: 총 출타 4/7명, 휴가 4/4명 마감', $$('.roster-chip').map((x) => x.textContent).join() === '총 출타 4/7명,휴가 4/4명 마감');
+    check('★ 명단: 휴가 4명 이름(보직)', $('.roster-people[data-kind="leave"]')?.textContent.trim().startsWith('휴가 4') && $('.roster-people[data-kind="leave"]').textContent.split(', ').length === 4);
+    check('누른 날 선택 표시·초점', rc('2026-11-12').classList.contains('selected') && doc.activeElement === rc('2026-11-12'));
+    rc('2026-11-20').click(); await wait(30);
+    check('없는 날 안내', $('.roster-detail .cal-empty')?.textContent === '이날 나간 사람이 없습니다.');
+    rf().elements.total.value = '10'; rf().elements.leave.value = '10'; rf().requestSubmit(); await wait(40);
+    await goMonth('roster', '2026-11-12');
+    check('★ 총 10%로 낮추면 11/12 "초과"', $(`.roster-day[data-date="2026-11-12"] .apply-seats`)?.textContent === '초과');
+    $(`.roster-day[data-date="2026-11-12"]`).click(); await wait(30);
+    check('초과 안내 문구', $('.roster-detail .over-note')?.textContent.includes('새 신청을 받지 않습니다'));
+    rf().elements.total.value = '35'; rf().elements.leave.value = '20'; rf().requestSubmit(); await wait(40);
+  }
+  $('[data-action="add-period"]').click(); await wait(30);
+  const pf = $('#leave-dialog form');
+  check('기간 추가: 종류 총 출타·휴가', [...pf.querySelectorAll('input[name="kind"]')].map((i) => i.value).join() === 'total,leave' && pf.elements.kind.value === 'total');
+  pf.elements.start_date.value = win.start; pf.elements.end_date.value = ''; pf.requestSubmit(); await wait(50);
+  check('기간 목록: 총 출타 0% · 하루 0명', $('.period-list .grant-title')?.textContent === '총 출타 0%' && $('.period-list .grant-meta').textContent.endsWith('하루 0명'));
+  await goMonth('roster', win.start);
+  check('★ 총 0% 날은 현황 달력에 "마감"', $(`.roster-day[data-date="${win.start}"] .apply-seats`)?.textContent === '마감');
+  check('360px 가로 넘침 없음(간부)', doc.documentElement.scrollWidth <= 360, doc.documentElement.scrollWidth);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>

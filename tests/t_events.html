@@ -1,0 +1,126 @@
+<!doctype html><meta charset="utf-8"><body><pre id="result">running</pre>
+<iframe id="f" style="width:360px;height:1200px;border:0"></iframe>
+<script type="module">
+const out = []; let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { cond ? pass++ : fail++; out.push(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); };
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+try {
+  // ── 데이터 계층 ──
+  localStorage.clear();
+  const d = await import('./js/data.js');
+  const { mockAuth, mockDb } = await import('./js/mock-data.js');
+  const codeOf = (id) => mockAuth.find((a) => a.user_id === id).code;
+  const on = (date) => d.getCalendarEvents(date, date);
+
+  check('들어오기 전 추가 불가', d.addPersonalEvent({ kind: 'other', title: 'x', start_date: '2026-10-24' }).reason === 'forbidden');
+  d.signIn('김하늘', codeOf('u01'));
+  let r = d.addPersonalEvent({ kind: 'other', title: ' PX 가기 ', start_date: '2026-10-24', end_date: '', time: '', memo: '' });
+  const pxId = r.event.id;
+  check('기타 추가', r.ok && /^e\d+$/.test(r.event.id) && r.event.kind === 'other' && r.event.type === 'personal' && r.event.title === 'PX 가기', JSON.stringify(r.event));
+  check('하루짜리는 끝 날짜 = 시작 날짜', r.event.end_date === '2026-10-24');
+  check('내 달력에 보임·수정 가능', on('2026-10-24').some((e) => e.id === pxId && e.editable));
+  check('★ 개인 일정에 근무 종류는 없음 (근무 순번으로 정해짐)', !!d.addPersonalEvent({ kind: 'duty', title: '불침번', start_date: '2026-10-25' }).errors?.kind);
+  r = d.addPersonalEvent({ title: '외박 준비', start_date: '2026-10-25', end_date: '2026-10-26', time: '22:00', memo: 'x' });
+  check('종류를 안 보내면 기타 (기간·시간)', r.ok && r.event.type === 'personal' && r.event.kind === 'other' && r.event.time === '22:00');
+  check('이틀 모두 표시', on('2026-10-25').some((e) => e.title === '외박 준비') && on('2026-10-26').some((e) => e.title === '외박 준비') && !on('2026-10-27').some((e) => e.title === '외박 준비'));
+  check('★ 생일 종류는 더 이상 받지 않음', !!d.addPersonalEvent({ kind: 'birthday', title: '어머니 생신', start_date: '2026-03-15' }).errors?.kind);
+  check('새 개인 일정은 매년 반복 아님', !d.getCalendarEvents('2026-10-24', '2026-10-24').some((e) => e.repeat_yearly));
+
+  let e = d.addPersonalEvent({ kind: 'nope', title: '', start_date: '' });
+  check('입력 오류: 종류·제목·날짜', e.reason === 'invalid' && e.errors.kind && e.errors.title && e.errors.start_date, JSON.stringify(e.errors));
+  check('입력 오류: 끝 날짜가 앞', !!d.addPersonalEvent({ kind: 'other', title: 'a', start_date: '2026-10-24', end_date: '2026-10-23' }).errors?.end_date);
+  check('입력 오류: 시간', !!d.addPersonalEvent({ kind: 'other', title: 'a', start_date: '2026-10-24', time: '25:00' }).errors?.time);
+  check('입력 오류: 제목 31자', !!d.addPersonalEvent({ kind: 'other', title: '가'.repeat(31), start_date: '2026-10-24' }).errors?.title);
+  check('입력 오류: 메모 201자', !!d.addPersonalEvent({ kind: 'other', title: 'a', start_date: '2026-10-24', memo: '가'.repeat(201) }).errors?.memo);
+  const before = mockDb.events.length;
+  d.addPersonalEvent({ kind: 'other', title: '', start_date: '2026-10-24' });
+  check('오류면 저장 안 됨', mockDb.events.length === before);
+
+  check('부대 일정은 수정 불가 표시', on('2026-10-21').find((x) => x.id === 'e02').editable === false);
+  check('부대 일정 수정 거부', d.updatePersonalEvent('e02', { kind: 'other', title: 'x', start_date: '2026-10-21' }).reason === 'not_found');
+  check('부대 일정 삭제 거부', d.deletePersonalEvent('e02').reason === 'not_found' && mockDb.events.some((x) => x.id === 'e02'));
+
+  r = d.updatePersonalEvent(pxId, { kind: 'other', title: 'PX', start_date: '2026-10-24', end_date: '2026-10-25', time: '13:00', memo: '' });
+  check('수정', r.ok && r.event.title === 'PX' && r.event.end_date === '2026-10-25' && on('2026-10-25').some((x) => x.id === pxId));
+  r = d.updatePersonalEvent(pxId, { kind: 'duty', title: 'PX', start_date: '2026-10-24' });
+  check('수정: 근무로 바꿀 수 없음', r.reason === 'invalid' && !!r.errors.kind);
+  check('수정 오류면 그대로', d.updatePersonalEvent(pxId, { kind: 'duty', title: '', start_date: '2026-10-24' }).reason === 'invalid' && mockDb.events.find((x) => x.id === pxId).title === 'PX');
+
+  d.signOut();
+  d.signIn('이바다', codeOf('u02'));
+  check('다른 사람 개인 일정 안 보임', !on('2026-10-24').some((x) => x.id === pxId));
+  check('부대 일정은 보임', on('2026-10-21').some((x) => x.id === 'e02'));
+  check('다른 사람 일정 수정 거부', d.updatePersonalEvent(pxId, { kind: 'other', title: 'x', start_date: '2026-10-24' }).reason === 'not_found');
+  check('다른 사람 일정 삭제 거부', d.deletePersonalEvent(pxId).reason === 'not_found' && mockDb.events.some((x) => x.id === pxId));
+  d.signOut();
+  d.signIn('백지훈', codeOf('o01'));
+  check('간부도 개인 일정 추가', d.addPersonalEvent({ kind: 'other', title: '간부 회의', start_date: '2026-10-24' }).ok);
+  d.signOut();
+  d.signIn('김하늘', codeOf('u01'));
+  check('삭제', d.deletePersonalEvent(pxId).ok && !mockDb.events.some((x) => x.id === pxId));
+  check('지운 일정 다시 삭제', d.deletePersonalEvent(pxId).reason === 'not_found');
+  d.signOut();
+
+  // ── 화면 ──
+  localStorage.clear(); localStorage.setItem('basecal.session', '"u01"');
+  const f = document.getElementById('f');
+  await new Promise((res) => { f.onload = () => setTimeout(res, 300); f.src = 'index.html?ui=1#calendar'; });
+  const doc = f.contentDocument, w = f.contentWindow;
+  const $ = (s) => doc.querySelector(s);
+  const $$ = (s) => [...doc.querySelectorAll(s)];
+  const goTo = async (y, m) => {
+    for (let i = 0; i < 24; i++) {
+      const [cy, cm] = $('.cal-title').textContent.match(/\d+/g).map(Number);
+      if (cy === y && cm === m) return;
+      $(`[data-action="${cy * 12 + cm < y * 12 + m ? 'next' : 'prev'}"]`).click(); await wait(20);
+    }
+  };
+  const cell = (date) => $(`.cal-day[data-date="${date}"]`);
+  const barsOn = (date) => [...doc.querySelectorAll('.cal-bar')].filter((b) => b.dataset.start <= date && date <= b.dataset.end);
+  const dlg = () => $('#event-dialog');
+  const form = () => $('#event-dialog form');
+  await goTo(2026, 10);
+  check('2-2 안내 문구 없어짐', !$$('.placeholder').some((p) => p.textContent.includes('2-2')));
+  cell('2026-10-24').click(); await wait(30);
+  $('[data-action="add-event"]').click(); await wait(30);
+  check('추가 창 열림', dlg().open && $('#event-dialog h2').textContent === '일정 추가');
+  check('고른 날짜가 미리 들어감', form().elements.start_date.value === '2026-10-24');
+  check('종류 고르기 없음 (기타만)', !form().elements.kind);
+  check('제목 칸에 초점', doc.activeElement === form().elements.title);
+  check('★ 근무는 근무 순번으로 정해진다는 안내', form().querySelector('.help')?.textContent.includes('근무 순번') && !form().querySelector('.birthday-help'));
+  check('끝 날짜 칸 보임', !form().querySelector('[data-field="end_date"]').hidden);
+  form().requestSubmit(); await wait(30);
+  check('제목 없으면 안내', !$('[data-error-for="title"]').hidden && dlg().open);
+  form().elements.title.value = '외래 진료'; form().elements.time.value = '09:30'; form().requestSubmit(); await wait(50);
+  check('저장하면 창 닫힘', !dlg().open);
+  let item = $$('.cal-event').find((x) => x.querySelector('.cal-event-title').textContent === '외래 진료');
+  check('목록에 개인 일정', item && item.querySelector('.type-badge').textContent === '개인' && item.querySelector('.cal-event-meta').textContent === '09:30');
+  check('달력에 막대', barsOn('2026-10-24').some((c) => c.textContent === '외래 진료' && c.classList.contains('type-personal')));
+  check('저장 후 추가 버튼에 초점', doc.activeElement === $('[data-action="add-event"]'));
+  item.querySelector('.small-button').click(); await wait(30);
+  check('수정 창: 값 채워짐', $('#event-dialog h2').textContent === '일정 수정' && form().elements.title.value === '외래 진료' && form().elements.time.value === '09:30');
+  form().elements.title.value = '외래 진료(정형외과)'; form().requestSubmit(); await wait(50);
+  check('수정 반영', $$('.cal-event-title').some((x) => x.textContent === '외래 진료(정형외과)'));
+  w.confirm = () => false;
+  item = $$('.cal-event').find((x) => x.querySelector('.cal-event-title').textContent === '외래 진료(정형외과)');
+  item.querySelector('.danger').click(); await wait(30);
+  check('삭제 취소하면 그대로', $$('.cal-event-title').some((x) => x.textContent === '외래 진료(정형외과)'));
+  w.confirm = () => true;
+  $$('.cal-event').find((x) => x.querySelector('.cal-event-title').textContent === '외래 진료(정형외과)').querySelector('.danger').click(); await wait(30);
+  check('삭제', !$$('.cal-event-title').some((x) => x.textContent === '외래 진료(정형외과)') && barsOn('2026-10-24').length === 0);
+  // 근무 기간
+  $('[data-action="add-event"]').click(); await wait(30);
+  form().elements.title.value = '위병소'; form().elements.start_date.value = '2026-11-02'; form().elements.end_date.value = '2026-11-04';
+  form().requestSubmit(); await wait(50);
+  check('다른 달 일정 저장하면 그 달로 이동', $('.cal-title').textContent === '2026년 11월' && $('.cal-day.selected').dataset.date === '2026-11-02');
+  check('3일 일정은 막대 하나', $$('.cal-bar').filter((b) => b.textContent === '위병소').length === 1 && barsOn('2026-11-03')[0]?.classList.contains('type-personal') && barsOn('2026-11-05').length === 0);
+  check('개인 글자 표시', $('.cal-event .type-badge').textContent === '개인' && $('.cal-event-meta').textContent === '11/2~11/4');
+  $('[data-action="add-event"]').click(); await wait(30);
+  $('#event-dialog [data-action="close"]').click(); await wait(30);
+  check('취소하면 닫힘', !dlg().open);
+  await goTo(2026, 10);
+  check('부대 일정엔 수정·삭제 없음', (cell('2026-10-21').click(), await wait(30), !$('.cal-event-actions')));
+  check('360px 가로 넘침 없음', doc.documentElement.scrollWidth <= 360, doc.documentElement.scrollWidth);
+} catch (err) { fail++; out.push('ERROR ' + err.stack); }
+document.getElementById('result').textContent = `통과 ${pass} / 실패 ${fail}\n` + out.join('\n');
+</script>
