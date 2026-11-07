@@ -770,7 +770,7 @@ function applyParts(redraw, user, summary) {
       error.hidden = false;
       return;
     }
-    st.message = `${shortDay(st.start)} ~ ${shortDay(st.end)} ${total}일 휴가를 신청했습니다. 달력에도 표시됩니다.`;
+    st.message = `${shortDay(st.start)} ~ ${shortDay(st.end)} ${total}일 휴가 자리를 확보했습니다. 달력에도 표시됩니다. 정식 휴가 결재는 기존 부대 절차대로 받으세요.`;
     st.start = null;
     st.end = null;
     st.alloc = null;
@@ -853,7 +853,7 @@ function absenceFormParts(redraw, st) {
       return;
     }
     const when = st.kind === 'outing' ? shortDay(st.start) : `${shortDay(st.start)} ~ ${shortDay(st.end)}`;
-    st.message = `${when} ${pass.checked ? `포상 ${kindLabel}` : kindLabel}을 신청했습니다. 달력에도 표시됩니다.`;
+    st.message = `${when} ${pass.checked ? `포상 ${kindLabel}` : kindLabel} 자리를 확보했습니다. 달력에도 표시됩니다. 정식 결재는 기존 부대 절차대로 받으세요.`;
     st.start = null;
     st.end = null;
     redraw('.apply-message');
@@ -868,6 +868,8 @@ function myRequestParts(redraw) {
   const head = el('div', 'leave-sub-head');
   head.append(el('h3', '', '내 출타 신청 내역'));
   parts.push(head);
+  // 신청은 간부 승인 없이 정원 안에서 바로 자리를 잡는다. "승인은 누가 하지?"라는 오해를 막는다 (2026-11-07 사용자 결정)
+  parts.push(el('p', 'help', '"자리 확보"는 출타 인원 자리를 잡아 둔 것입니다. 앱에서 따로 승인받지 않습니다. 정식 휴가 결재는 기존 부대 절차대로 받으세요.'));
   const requests = getMyLeaveRequests();
   if (requests.length === 0) {
     parts.push(el('p', 'cal-empty', '신청한 출타가 없습니다.'));
@@ -886,7 +888,7 @@ function myRequestParts(redraw) {
         : `${r.kind === 'outing' ? (isWeekendDay(r.start_date) ? '주말 외출' : '평일 외출') : '외박'} · ${r.reward_pass ? `포상 ${kindLabel} 사용` : '일반'}`;
     item.dataset.kind = r.kind;
     item.append(
-      el('span', `status-badge ${active ? 'status-approved' : 'status-rejected'}`, active ? '신청' : '취소'),
+      el('span', `status-badge ${active ? 'status-approved' : 'status-rejected'}`, active ? '자리 확보' : '취소'),
       el('span', `type-badge type-${r.kind}`, kindLabel),
       el('span', 'grant-title', r.kind === 'leave' ? `${when} · ${r.days}일` : when),
       el('span', 'grant-meta', meta),
