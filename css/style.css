@@ -1812,3 +1812,246 @@ fieldset.field {
   flex: 1;
   min-width: 0;
 }
+
+/* ── 시설 영역 (Phase 4) ── */
+/* 예약 순서 안내: 1 날짜 → 2 약도 → 3 시간 */
+.fac-step {
+  margin: 14px 0 6px;
+  font-weight: 700;
+}
+
+.fac-warn,
+.fac-note {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.fac-warn {
+  background: color-mix(in srgb, #a12222 10%, var(--surface));
+  color: #a12222;
+}
+
+.fac-note {
+  background: color-mix(in srgb, var(--type-duty) 10%, var(--surface));
+  color: var(--text);
+}
+
+/* 1. 날짜 달력 */
+.fac-cal {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.fac-cal-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fac-cal-day.sun .fac-cal-num { color: var(--sun); }
+.fac-cal-day.sat .fac-cal-num { color: var(--sat); }
+
+.fac-cal-day.today .fac-cal-num {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.fac-cal-day.outside {
+  cursor: default;
+}
+
+.fac-cal-day.outside .fac-cal-num {
+  color: var(--border);
+}
+
+.fac-cal-day.away {
+  background: var(--bg);
+}
+
+.fac-cal-day.has-mine {
+  background: color-mix(in srgb, var(--type-reservation) 12%, var(--surface));
+}
+
+.fac-cal-day.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.fac-cal-num {
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.fac-cal-tag {
+  color: var(--type-reservation);
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.fac-cal-day.away .fac-cal-tag {
+  color: var(--text-muted);
+}
+
+/* 2. 약도: 4칸 2줄 (실내체육관은 두 칸). 종류별 색 + 이름 글자 */
+.fac-map {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(88px, auto);
+  gap: 4px;
+  padding: 4px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+}
+
+.fac-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 2px;
+  border: 1px solid var(--kind);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--kind) 12%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fac-cell.kind-futsal { --kind: #2e8b57; }
+.fac-cell.kind-tennis { --kind: #c26a00; }
+.fac-cell.kind-field { --kind: #6d7f1f; }
+.fac-cell.kind-gym { --kind: #2f6fb3; }
+
+.fac-cell.closed {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+.fac-cell.selected {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fac-cell-no {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.fac-cell-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  word-break: keep-all;
+  text-align: center;
+}
+
+.fac-cell-building {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.fac-cell-free {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--kind);
+}
+
+.fac-cell.closed .fac-cell-free {
+  color: var(--text-muted);
+}
+
+/* 3. 시간: 3줄로 12칸 */
+.fac-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.fac-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fac-slot-time {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.fac-slot-state {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fac-slot.state-free .fac-slot-state {
+  color: var(--accent);
+}
+
+/* 신청 중·예약됨·사용 불가·지남: 회색 + 글자 */
+.fac-slot:disabled {
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.fac-slot.state-mine:disabled {
+  background: color-mix(in srgb, var(--type-reservation) 12%, var(--surface));
+  color: var(--type-reservation);
+}
+
+.fac-slot.chosen {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.fac-slot.chosen .fac-slot-state {
+  color: #fff;
+}
+
+.fac-reject {
+  color: #a12222;
+}
+
+/* 시설 막기 창: 시작 ~ 끝 시간 */
+.fac-block-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.fac-block-times select {
+  flex: 1;
+}

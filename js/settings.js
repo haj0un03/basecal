@@ -21,3 +21,11 @@ export const WEEKEND_OUTING_PER_QUARTER = 2;
 export const WEEKDAY_OUTING_PER_MONTH = 2;
 // 한 달에 쓸 수 있는 외박·주말 외출 (합쳐서)
 export const WEEKEND_ABSENCE_PER_MONTH = 1;
+
+// 시설 예약 (2026-11-07 사용자 확정)
+// - 오늘부터 며칠 뒤까지 예약할 수 있는가 (14 = 2주 뒤 같은 날까지)
+// - 한 번에 몇 시간까지 (1시간 단위)
+// - 한 사람이 하루에 가질 수 있는 예약(대기·승인) 건수
+export const RESERVATION_DAYS_AHEAD = 14;
+export const MAX_RESERVATION_HOURS = 2;
+export const RESERVATIONS_PER_DAY = 1;

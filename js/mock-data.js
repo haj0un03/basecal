@@ -22,7 +22,11 @@
 //   kind별 가장 최근 값을 쓴다. 휴가는 총 출타에 포함되므로 휴가 비율 ≤ 총 출타 비율 (사용자 값: 총 35%, 휴가 20%)
 // - leave_rate_periods: 기간별 출타율(kind: total 또는 leave). 그 기간에는 기본 출타율 대신 이 값을 쓴다
 // - 가상 휴가 신청: 11/12~13에 4명(휴가 정원 4명이라 휴가 마감, 총 출타는 7명 중 4명), 11/5~6에 1명
-// - facilities의 운영 시간은 아직 정해지지 않아 임시 값이다 (prd.md 11번).
+// - facilities: 시설 7곳, 모두 09–21시 (2026-11-07 사용자 결정). kind: futsal(풋살장), tennis(테니스장), field(운동장), gym(체육관)
+//   map_row·map_col·map_span: 약도에서의 위치 (줄, 칸, 차지하는 칸 수). 4칸 2줄.
+// - reservations.status: pending(대기), approved(승인), rejected(반려), cancelled(취소). 시각은 'HH:MM', 1시간 단위
+// - facility_blocks: 간부가 막아 둔 시설. start_time·end_time이 null이면 하루 종일
+// - 가상 예약: 11/10 풋살장(청룡관) 10–12시 승인·14–15시 대기, 실내체육관 19–21시 대기. 가상 막기: 11/11 대운동장 하루 종일
 // - duty_posts: 근무지. slots는 시간대 이름 목록(시간대마다 하루 1명), start_date는 순번 기준일(그날 명단 1번부터 시작).
 //   duty_rosters: 근무지별 순번 명단(order 순서). 근무자는 저장하지 않고 이것으로 매번 계산한다.
 //   duty_overrides: 간부의 손 수정·근무 교대로 바뀐 근무(slot은 시간대 번호, 0부터). duty_swaps: 근무 교대 요청.
@@ -787,17 +791,87 @@ export const mockDb = {
   "facilities": [
     {
       "id": "f01",
-      "name": "풋살장·운동장",
+      "name": "풋살장",
+      "building": "청룡관",
+      "kind": "futsal",
       "open_time": "09:00",
-      "close_time": "18:00",
-      "slot_minutes": 60
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 1,
+      "map_col": 1,
+      "map_span": 1
     },
     {
       "id": "f02",
-      "name": "체육관",
+      "name": "풋살장",
+      "building": "주작관",
+      "kind": "futsal",
       "open_time": "09:00",
       "close_time": "21:00",
-      "slot_minutes": 60
+      "slot_minutes": 60,
+      "map_row": 1,
+      "map_col": 2,
+      "map_span": 1
+    },
+    {
+      "id": "f03",
+      "name": "테니스장",
+      "building": "주작관",
+      "kind": "tennis",
+      "open_time": "09:00",
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 1,
+      "map_col": 3,
+      "map_span": 1
+    },
+    {
+      "id": "f04",
+      "name": "대운동장",
+      "building": "주작관",
+      "kind": "field",
+      "open_time": "09:00",
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 1,
+      "map_col": 4,
+      "map_span": 1
+    },
+    {
+      "id": "f05",
+      "name": "풋살장",
+      "building": "이정란관",
+      "kind": "futsal",
+      "open_time": "09:00",
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 2,
+      "map_col": 1,
+      "map_span": 1
+    },
+    {
+      "id": "f06",
+      "name": "테니스장",
+      "building": "이정란관",
+      "kind": "tennis",
+      "open_time": "09:00",
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 2,
+      "map_col": 2,
+      "map_span": 1
+    },
+    {
+      "id": "f07",
+      "name": "실내체육관",
+      "building": "이정란관",
+      "kind": "gym",
+      "open_time": "09:00",
+      "close_time": "21:00",
+      "slot_minutes": 60,
+      "map_row": 2,
+      "map_col": 3,
+      "map_span": 2
     }
   ],
   "duty_posts": [
@@ -868,7 +942,59 @@ export const mockDb = {
   ],
   "duty_overrides": [],
   "duty_swaps": [],
-  "reservations": [],
+  "reservations": [
+    {
+      "id": "v01",
+      "facility_id": "f01",
+      "user_id": "u03",
+      "date": "2026-11-10",
+      "start_time": "10:00",
+      "end_time": "12:00",
+      "status": "approved",
+      "reject_reason": null,
+      "decided_by": "o01",
+      "requested_at": "2026-11-05T09:00:00.000Z",
+      "decided_at": "2026-11-05T10:00:00.000Z"
+    },
+    {
+      "id": "v02",
+      "facility_id": "f01",
+      "user_id": "u04",
+      "date": "2026-11-10",
+      "start_time": "14:00",
+      "end_time": "15:00",
+      "status": "pending",
+      "reject_reason": null,
+      "decided_by": null,
+      "requested_at": "2026-11-06T09:00:00.000Z",
+      "decided_at": null
+    },
+    {
+      "id": "v03",
+      "facility_id": "f07",
+      "user_id": "u09",
+      "date": "2026-11-10",
+      "start_time": "19:00",
+      "end_time": "21:00",
+      "status": "pending",
+      "reject_reason": null,
+      "decided_by": null,
+      "requested_at": "2026-11-06T12:00:00.000Z",
+      "decided_at": null
+    }
+  ],
+  "facility_blocks": [
+    {
+      "id": "b01",
+      "facility_id": "f04",
+      "date": "2026-11-11",
+      "start_time": null,
+      "end_time": null,
+      "reason": "잔디 보수",
+      "created_by": "o01",
+      "created_at": "2026-11-05T09:00:00.000Z"
+    }
+  ],
   "audit_logs": []
 };
 

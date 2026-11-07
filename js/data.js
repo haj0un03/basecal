@@ -16,6 +16,9 @@ import {
   WEEKEND_OUTING_PER_QUARTER,
   WEEKDAY_OUTING_PER_MONTH,
   WEEKEND_ABSENCE_PER_MONTH,
+  RESERVATION_DAYS_AHEAD,
+  MAX_RESERVATION_HOURS,
+  RESERVATIONS_PER_DAY,
 } from './settings.js';
 
 const MAX_FAILURES = 5;
@@ -283,6 +286,23 @@ export function getCalendarEvents(start, end) {
       unit_category: null,
       repeat_yearly: false,
       original_start_date: d.date,
+      editable: false,
+    });
+  });
+  // 승인된 내 시설 예약 (고치거나 지울 수 없다. 취소는 신청 탭 시설에서)
+  approvedReservationsOf(user.id, start, end).forEach((r) => {
+    result.push({
+      id: `reservation:${r.id}`,
+      type: 'reservation',
+      kind: 'reservation',
+      title: `${facilityLabel(r.facility_id)} ${r.start_time}~${r.end_time}`,
+      memo: '',
+      start_date: r.date,
+      end_date: r.date,
+      time: r.start_time,
+      unit_category: null,
+      repeat_yearly: false,
+      original_start_date: r.date,
       editable: false,
     });
   });
@@ -1966,4 +1986,365 @@ export function getMySwapChoices(theirDuty, now = Date.now()) {
     );
   });
   return { partner: { id: partnerId, name: nameOf(partnerId) }, duties };
+}
+
+// ── 시설 예약 (Phase 4, prd.md "핵심 3. 시설 예약") ─────────────
+// 순서: 달력(날짜) → 약도 → 시설 → 시간 → 예약. 1시간 단위, 한 번에 최대 2시간, 오늘부터 2주, 하루 1건.
+// - 먼저 신청한 사람만 받는다. 대기·승인된 시간대는 다른 사람이 신청할 수 없다.
+// - 간부가 승인하면 확정, 반려하면 사유를 남긴다. 반려·취소되면 그 시간대는 다시 열린다.
+// - 간부가 막아 둔 시간(facility_blocks)은 "사용 불가"
+// - 내가 출타 중인 날은 예약할 수 없다. 근무가 있는 날은 안내만 한다.
+// - 아직 가상 데이터만 (Supabase로는 5-4에서 옮긴다).
+
+const MAX_RESERVATION_REASON_LENGTH = 100;
+const MAX_BLOCK_REASON_LENGTH = 50;
+const ACTIVE_RESERVATION = ['pending', 'approved'];
+
+function toMinutes(time) {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function toTime(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+function isTime(value) {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+// 예약할 수 있는 기간: 오늘 ~ 2주 뒤 같은 날 (settings.js RESERVATION_DAYS_AHEAD)
+export function getReservationWindow(now = Date.now()) {
+  const today = new Date(now);
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + RESERVATION_DAYS_AHEAD);
+  return { start: localISO(today), end: localISO(end) };
+}
+
+function facilityView(f) {
+  return {
+    id: f.id,
+    name: f.name,
+    building: f.building,
+    kind: f.kind,
+    label: `${f.name}(${f.building})`,
+    open_time: f.open_time,
+    close_time: f.close_time,
+    slot_minutes: f.slot_minutes,
+    map_row: f.map_row,
+    map_col: f.map_col,
+    map_span: f.map_span,
+  };
+}
+
+export function getFacilities() {
+  if (!getCurrentUser()) return [];
+  return mockDb.facilities.map(facilityView);
+}
+
+function facilityLabel(id) {
+  const f = mockDb.facilities.find((x) => x.id === id);
+  return f ? `${f.name}(${f.building})` : '(없어진 시설)';
+}
+
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function activeReservationsOn(facilityId, date) {
+  return mockDb.reservations.filter(
+    (r) => r.facility_id === facilityId && r.date === date && ACTIVE_RESERVATION.includes(r.status),
+  );
+}
+
+// facility_id가 null이면 모든 시설을 막는다. 시각이 null이면 하루 종일.
+function blocksOn(facilityId, date) {
+  return mockDb.facility_blocks.filter((b) => (b.facility_id === null || b.facility_id === facilityId) && b.date === date);
+}
+
+function blockCovers(b, start, end) {
+  return b.start_time === null || overlaps(toMinutes(b.start_time), toMinutes(b.end_time), start, end);
+}
+
+function nowMinutes(now) {
+  const d = new Date(now);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+// 한 시설의 그날 시간대. state: free(빈 시간) | pending(신청 중) | approved(예약됨) | mine(내 신청) | blocked(사용 불가) | past(지난 시간)
+function slotsOf(f, date, user, now) {
+  const today = localISO(new Date(now));
+  const reservations = activeReservationsOn(f.id, date);
+  const blocks = blocksOn(f.id, date);
+  const slots = [];
+  for (let m = toMinutes(f.open_time); m + f.slot_minutes <= toMinutes(f.close_time); m += f.slot_minutes) {
+    const end = m + f.slot_minutes;
+    const slot = { start_time: toTime(m), end_time: toTime(end), state: 'free' };
+    const block = blocks.find((b) => blockCovers(b, m, end));
+    const reservation = reservations.find((r) => overlaps(toMinutes(r.start_time), toMinutes(r.end_time), m, end));
+    if (block) {
+      slot.state = 'blocked';
+      slot.reason = block.reason;
+    } else if (reservation) {
+      slot.state = reservation.user_id === user.id ? 'mine' : reservation.status;
+      slot.reservation_id = reservation.id;
+      slot.user_name = nameOf(reservation.user_id);
+      slot.status = reservation.status;
+    } else if (date < today || (date === today && m < nowMinutes(now))) {
+      slot.state = 'past';
+    }
+    slots.push(slot);
+  }
+  return slots;
+}
+
+// 그날 모든 시설의 시간대와 빈 시간 수 (약도와 시간 고르기에 쓴다)
+// 결과: [{ ...시설, slots, free_count, blocked_all }]
+export function getFacilityDay(date, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || !isDate(date)) return [];
+  return mockDb.facilities.map((f) => {
+    const slots = slotsOf(f, date, user, now);
+    return {
+      ...facilityView(f),
+      slots,
+      free_count: slots.filter((s) => s.state === 'free').length,
+      blocked_all: slots.every((s) => s.state === 'blocked'),
+      block_reason: slots.find((s) => s.state === 'blocked')?.reason ?? null,
+    };
+  });
+}
+
+function reservationView(r) {
+  return {
+    ...r,
+    facility_label: facilityLabel(r.facility_id),
+    user_name: nameOf(r.user_id),
+    decided_by_name: r.decided_by ? nameOf(r.decided_by) : null,
+    hours: (toMinutes(r.end_time) - toMinutes(r.start_time)) / 60,
+  };
+}
+
+function myActiveReservationOn(userId, date) {
+  return mockDb.reservations.filter((r) => r.user_id === userId && r.date === date && ACTIVE_RESERVATION.includes(r.status));
+}
+
+// 그날 나에게 해당하는 안내: 출타 중(예약 불가), 근무(안내만), 이미 가진 예약(하루 1건)
+export function getReservationDayInfo(date, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || !isDate(date)) return null;
+  const win = getReservationWindow(now);
+  return {
+    in_window: date >= win.start && date <= win.end,
+    away: isAway(user.id, date),
+    duties: dutiesOf(user.id, date, date).map((d) => `${d.post_name} ${d.label}`),
+    mine: myActiveReservationOn(user.id, date).map(reservationView),
+    limit_reached: myActiveReservationOn(user.id, date).length >= RESERVATIONS_PER_DAY,
+  };
+}
+
+// 내 예약 (취소·반려 포함). 날짜가 가까운 것부터, 지난 것은 뒤로
+export function getMyReservations(now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return [];
+  const today = localISO(new Date(now));
+  return mockDb.reservations
+    .filter((r) => r.user_id === user.id)
+    .map(reservationView)
+    .sort(
+      (a, b) =>
+        (a.date < today) - (b.date < today) ||
+        (a.date < today ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)) ||
+        a.start_time.localeCompare(b.start_time),
+    );
+}
+
+// 병사·간부 모두. input: { facility_id, date, start_time, hours }
+// 결과: { ok: true, reservation } 또는 { ok: false, reason: 'forbidden' | 'not_found' | 'invalid', errors: { time } }
+export function requestReservation(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const f = mockDb.facilities.find((x) => x.id === input.facility_id);
+  if (!f) return { ok: false, reason: 'not_found' };
+  const date = input.date;
+  const hours = Number(input.hours);
+  const win = getReservationWindow(now);
+  const fail = (message) => ({ ok: false, reason: 'invalid', errors: { time: message } });
+  if (!isDate(date) || date < win.start || date > win.end) {
+    return fail(`오늘부터 2주 이내(${win.start} ~ ${win.end})의 날짜만 예약할 수 있습니다.`);
+  }
+  if (!isTime(input.start_time)) return fail('시작 시간을 고르세요.');
+  if (!Number.isInteger(hours) || hours < 1 || hours > MAX_RESERVATION_HOURS) {
+    return fail(`한 번에 1시간부터 ${MAX_RESERVATION_HOURS}시간까지 예약할 수 있습니다.`);
+  }
+  const start = toMinutes(input.start_time);
+  const end = start + hours * f.slot_minutes;
+  if (start < toMinutes(f.open_time) || end > toMinutes(f.close_time) || (start - toMinutes(f.open_time)) % f.slot_minutes !== 0) {
+    return fail(`운영 시간(${f.open_time} ~ ${f.close_time}) 안에서 1시간 단위로 고르세요.`);
+  }
+  if (date === win.start && start < nowMinutes(now)) return fail('이미 시작한 시간대는 예약할 수 없습니다.');
+  if (isAway(user.id, date)) return fail('출타 중인 날은 시설을 예약할 수 없습니다.');
+  const mine = myActiveReservationOn(user.id, date);
+  if (mine.length >= RESERVATIONS_PER_DAY) {
+    const r = mine[0];
+    return fail(`하루에 ${RESERVATIONS_PER_DAY}건만 예약할 수 있습니다. 이미 ${facilityLabel(r.facility_id)} ${r.start_time}~${r.end_time} 예약이 있습니다.`);
+  }
+  const block = blocksOn(f.id, date).find((b) => blockCovers(b, start, end));
+  if (block) return fail(`사용 불가인 시간이 있습니다 (${block.reason}).`);
+  if (activeReservationsOn(f.id, date).some((r) => overlaps(toMinutes(r.start_time), toMinutes(r.end_time), start, end))) {
+    return fail('이미 신청된 시간이 있습니다. 다른 시간을 고르세요.');
+  }
+  const row = {
+    id: nextId('v', mockDb.reservations),
+    facility_id: f.id,
+    user_id: user.id,
+    date,
+    start_time: toTime(start),
+    end_time: toTime(end),
+    status: 'pending',
+    reject_reason: null,
+    decided_by: null,
+    requested_at: new Date(now).toISOString(),
+    decided_at: null,
+  };
+  mockDb.reservations.push(row);
+  return { ok: true, reservation: reservationView(row) };
+}
+
+// 신청한 사람만. 대기·승인 상태일 때 취소할 수 있다. 취소하면 그 시간대가 다시 열린다.
+export function cancelReservation(id, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const r = mockDb.reservations.find((x) => x.id === id);
+  if (!r) return { ok: false, reason: 'not_found' };
+  if (r.user_id !== user.id) return { ok: false, reason: 'forbidden' };
+  if (!ACTIVE_RESERVATION.includes(r.status)) return { ok: false, reason: 'already_decided' };
+  r.status = 'cancelled';
+  r.cancelled_at = new Date(now).toISOString();
+  return { ok: true };
+}
+
+// 간부만. 대기 중인 신청 (신청 시각 순)
+export function getPendingReservations() {
+  if (!requireOfficer()) return [];
+  return mockDb.reservations
+    .filter((r) => r.status === 'pending')
+    .map(reservationView)
+    .sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
+}
+
+// 간부만. decision: 'approve' | 'reject'(reason 필수)
+export function decideReservation(id, decision, reason = '', now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  if (decision !== 'approve' && decision !== 'reject') return { ok: false, reason: 'invalid' };
+  const r = mockDb.reservations.find((x) => x.id === id);
+  if (!r) return { ok: false, reason: 'not_found' };
+  if (r.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  if (decision === 'reject') {
+    const text = String(reason ?? '').trim();
+    if (!text) return { ok: false, reason: 'invalid', errors: { reject_reason: '반려 사유를 입력하세요.' } };
+    if (text.length > MAX_RESERVATION_REASON_LENGTH) {
+      return { ok: false, reason: 'invalid', errors: { reject_reason: `사유는 ${MAX_RESERVATION_REASON_LENGTH}자 이하로 입력하세요.` } };
+    }
+    r.reject_reason = text;
+  }
+  r.status = decision === 'approve' ? 'approved' : 'rejected';
+  r.decided_by = officer.id;
+  r.decided_at = new Date(now).toISOString();
+  writeAuditLog(officer, decision === 'approve' ? 'approve_reservation' : 'reject_reservation', 'reservations', r.id, now);
+  return { ok: true };
+}
+
+// ── 시설 막기 (간부) ──
+
+function blockView(b) {
+  return {
+    ...b,
+    facility_label: b.facility_id === null ? '모든 시설' : facilityLabel(b.facility_id),
+    time_label: b.start_time === null ? '하루 종일' : `${b.start_time}~${b.end_time}`,
+    created_by_name: nameOf(b.created_by),
+  };
+}
+
+// 오늘 이후의 막기 (날짜순). 모두 본다.
+export function getFacilityBlocks(now = Date.now()) {
+  if (!getCurrentUser()) return [];
+  const today = localISO(new Date(now));
+  return mockDb.facility_blocks
+    .filter((b) => b.date >= today)
+    .map(blockView)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.start_time ?? '').localeCompare(b.start_time ?? '') || a.id.localeCompare(b.id));
+}
+
+// 간부만. input: { facility_id('all'이면 모든 시설), date, all_day, start_time, end_time, reason }
+// 그 시간에 대기·승인된 예약이 있으면 막을 수 없다 (먼저 반려).
+export function addFacilityBlock(input, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const errors = {};
+  const allFacilities = input.facility_id === 'all';
+  const f = allFacilities ? null : mockDb.facilities.find((x) => x.id === input.facility_id);
+  if (!allFacilities && !f) errors.facility_id = '시설을 고르세요.';
+  const today = localISO(new Date(now));
+  if (!isDate(input.date)) errors.date = '날짜를 고르세요.';
+  else if (input.date < today) errors.date = '지난 날짜는 막을 수 없습니다.';
+  const allDay = Boolean(input.all_day);
+  let start = null;
+  let end = null;
+  if (!allDay) {
+    if (!isTime(input.start_time) || !isTime(input.end_time) || input.start_time.slice(3) !== '00' || input.end_time.slice(3) !== '00') {
+      errors.time = '시작·끝 시간을 정시로 고르세요.';
+    } else if (input.end_time <= input.start_time) {
+      errors.time = '끝 시간은 시작 시간보다 뒤여야 합니다.';
+    } else {
+      start = input.start_time;
+      end = input.end_time;
+    }
+  }
+  const reason = String(input.reason ?? '').trim();
+  if (!reason) errors.reason = '사유를 입력하세요.';
+  else if (reason.length > MAX_BLOCK_REASON_LENGTH) errors.reason = `사유는 ${MAX_BLOCK_REASON_LENGTH}자 이하로 입력하세요.`;
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+  const targets = allFacilities ? mockDb.facilities : [f];
+  const clash = mockDb.reservations.filter(
+    (r) =>
+      r.date === input.date &&
+      ACTIVE_RESERVATION.includes(r.status) &&
+      targets.some((t) => t.id === r.facility_id) &&
+      (start === null || overlaps(toMinutes(r.start_time), toMinutes(r.end_time), toMinutes(start), toMinutes(end))),
+  );
+  if (clash.length) {
+    const list = clash.map((r) => `${facilityLabel(r.facility_id)} ${r.start_time}~${r.end_time} ${nameOf(r.user_id)}`).join(', ');
+    return { ok: false, reason: 'invalid', errors: { time: `이 시간에 예약이 있어 막을 수 없습니다. 먼저 반려하세요: ${list}` } };
+  }
+  const row = {
+    id: nextId('b', mockDb.facility_blocks),
+    facility_id: allFacilities ? null : f.id,
+    date: input.date,
+    start_time: start,
+    end_time: end,
+    reason,
+    created_by: officer.id,
+    created_at: new Date(now).toISOString(),
+  };
+  mockDb.facility_blocks.push(row);
+  writeAuditLog(officer, 'add_facility_block', 'facility_blocks', row.id, now);
+  return { ok: true, block: blockView(row) };
+}
+
+// 간부만. 막기를 푼다.
+export function deleteFacilityBlock(id, now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  const index = mockDb.facility_blocks.findIndex((b) => b.id === id);
+  if (index < 0) return { ok: false, reason: 'not_found' };
+  mockDb.facility_blocks.splice(index, 1);
+  writeAuditLog(officer, 'delete_facility_block', 'facility_blocks', id, now);
+  return { ok: true };
+}
+
+// 승인된 내 예약 (달력 탭에 "시설"로 보인다)
+function approvedReservationsOf(userId, start, end) {
+  return mockDb.reservations.filter((r) => r.user_id === userId && r.status === 'approved' && r.date >= start && r.date <= end);
 }

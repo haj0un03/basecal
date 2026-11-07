@@ -14,11 +14,10 @@ import {
 import { renderCalendar } from './calendar.js';
 import { renderLeaveSection } from './leave.js';
 import { renderDutySection } from './duty.js';
+import { renderFacilitySection } from './facility.js';
 
 // 신청 탭은 위쪽 탭(휴가·근무·시설)으로 영역을 하나씩 보여준다 (2026-11-07 사용자 요청).
 // 주소: #apply/leave, #apply/duty, #apply/facility (#apply는 휴가)
-// 아직 만들지 않은 영역의 안내는 역할별로 다르다 (prd.md 3번 권한, 6번 주요 화면).
-// - all: 모두에게, soldier: 병사에게만, officer: 간부에게만 (간부 전용 표시와 함께)
 const TABS = {
   calendar: { title: '달력' },
   apply: { title: '신청' },
@@ -28,15 +27,7 @@ const APPLY_PANELS = [
   { key: 'leave', label: '휴가' },
   // 병사에게는 "근무 교대", 간부에게는 "근무"
   { key: 'duty', label: '근무', soldierLabel: '근무 교대' },
-  {
-    key: 'facility',
-    label: '시설',
-    placeholder: {
-      heading: '시설',
-      all: '시설 목록, 날짜별 시간대 현황, 예약 신청, 내 예약은 Phase 4에서 만듭니다.',
-      officer: '예약 승인 대기 목록은 Phase 4에서 만듭니다.',
-    },
-  },
+  { key: 'facility', label: '시설' },
 ];
 
 // 예전 탭 주소로 들어와도 신청 탭의 그 영역을 연다.
@@ -65,33 +56,6 @@ function currentRoute() {
 
 function formatCode(code) {
   return `${code.slice(0, 3)} ${code.slice(3)}`;
-}
-
-function placeholder(text, officerOnly = false) {
-  const p = document.createElement('p');
-  p.className = officerOnly ? 'placeholder officer-only' : 'placeholder';
-  if (officerOnly) {
-    const badge = document.createElement('span');
-    badge.className = 'officer-badge';
-    badge.textContent = '간부 전용';
-    p.append(badge);
-  }
-  p.append(text);
-  return p;
-}
-
-function renderSection(spec, user) {
-  const section = document.createElement('section');
-  section.className = 'section';
-  if (spec.heading) {
-    const h2 = document.createElement('h2');
-    h2.textContent = spec.heading;
-    section.append(h2);
-  }
-  if (spec.all) section.append(placeholder(spec.all));
-  if (spec.soldier && user.role === 'soldier') section.append(placeholder(spec.soldier));
-  if (spec.officer && user.role === 'officer') section.append(placeholder(spec.officer, true));
-  return section;
 }
 
 // 신청 탭 위쪽 탭: 휴가 | 근무 | 시설
@@ -129,16 +93,12 @@ function renderView(user) {
   if (tab === 'apply') {
     lastPanel = panel;
     parts.push(applyNav(panel, user));
-    const spec = APPLY_PANELS.find((x) => x.key === panel);
-    if (spec.placeholder) {
-      parts.push(renderSection(spec.placeholder, user));
-    } else {
-      const section = document.createElement('section');
-      section.className = `section ${panel}-section`;
-      if (panel === 'leave') renderLeaveSection(section, user);
-      if (panel === 'duty') renderDutySection(section, user);
-      parts.push(section);
-    }
+    const section = document.createElement('section');
+    section.className = `section ${panel}-section`;
+    if (panel === 'leave') renderLeaveSection(section, user);
+    if (panel === 'duty') renderDutySection(section, user);
+    if (panel === 'facility') renderFacilitySection(section, user);
+    parts.push(section);
   }
   view.replaceChildren(...parts);
   const route = `${tab}/${panel}`;
