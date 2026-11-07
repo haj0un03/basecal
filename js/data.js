@@ -1687,3 +1687,240 @@ export function clearDutyOverride(input, now = Date.now()) {
 export function getMyDutyDates(start, end) {
   return [...new Set(getMyDuties(start, end).map((d) => d.date))];
 }
+
+// ── 근무 교대 (Phase 3.5-3) ────────────────────────────────
+// 병사끼리 먼저 이야기한 뒤, 한 명이 앱에서 교대를 요청하고(사유 필수) 간부가 승인·반려한다 (2026-11-07 사용자 결정).
+// - kind: swap(맞바꾸기 — 내 근무 ↔ 상대 근무), cover(대신 서기 — 상대가 내 근무를 대신 섬)
+// - status: pending(간부 승인 대기), approved(승인), rejected(반려, 사유 필수), cancelled(요청자가 취소)
+// - 상대 병사의 근무 교대 탭에도 요청이 보인다 (앱 안 수락 단계는 없음)
+// - 승인할 때 다시 확인한다. 그사이 출타·근무가 바뀌었으면 승인할 수 없다.
+// - 승인하면 duty_overrides에 출처 swap으로 넣는다 (근무자는 여전히 계산).
+
+const MAX_SWAP_REASON_LENGTH = 100;
+export const SWAP_KINDS = ['swap', 'cover'];
+
+function sameDuty(a, b) {
+  return Boolean(a && b) && a.post_id === b.post_id && a.date === b.date && Number(a.slot) === Number(b.slot);
+}
+
+function cleanDuty(d) {
+  if (!d || typeof d !== 'object') return null;
+  return { post_id: String(d.post_id ?? ''), date: String(d.date ?? ''), slot: Number(d.slot) };
+}
+
+// 그 근무(근무지·날짜·시간대)의 지금 근무자. 없으면 null
+function holderOf(d) {
+  const post = activePosts().find((p) => p.id === d.post_id);
+  if (!post || !isDate(d.date)) return null;
+  return postDay(post, d.date).find((x) => x.slot === d.slot)?.user_id ?? null;
+}
+
+function dutyLabel(d) {
+  const post = mockDb.duty_posts.find((p) => p.id === d.post_id);
+  return { post_name: post?.name ?? '(없어진 근무지)', label: post?.slots[d.slot] ?? `${d.slot + 1}번` };
+}
+
+function dutyName(d) {
+  const x = dutyLabel(d);
+  return `${Number(d.date.slice(5, 7))}/${Number(d.date.slice(8))} ${x.post_name} ${x.label}`;
+}
+
+// 교대가 지금 가능한지 확인한다. 문제가 있으면 안내 문구, 없으면 null. (요청할 때와 승인할 때 같이 쓴다)
+function checkSwap(swap, now) {
+  const win = getApplyWindow(now);
+  const mine = swap.requester_duty;
+  const theirs = swap.partner_duty;
+  const partner = mockDb.profiles.find((p) => p.id === swap.partner_id && p.is_active && p.role === 'soldier');
+  const requesterName = nameOf(swap.requester_id);
+  if (!partner) return '교대할 병사를 고르세요.';
+  if (partner.id === swap.requester_id) return '자기 자신과는 교대할 수 없습니다.';
+  if (swap.kind === 'swap' && !theirs) return '맞바꿀 상대의 근무를 고르세요.';
+  const dates = [mine.date, ...(theirs ? [theirs.date] : [])];
+  if (dates.some((x) => !isDate(x) || x < win.start || x > win.end)) {
+    return `오늘부터 한 달 이내(${win.start} ~ ${win.end})의 근무만 교대할 수 있습니다.`;
+  }
+  if (holderOf(mine) !== swap.requester_id) return `${requesterName}의 ${dutyName(mine)} 근무가 바뀌어 교대할 수 없습니다.`;
+  if (swap.kind === 'swap') {
+    if (sameDuty(mine, theirs)) return '같은 근무끼리는 맞바꿀 수 없습니다.';
+    if (holderOf(theirs) !== partner.id) return `${partner.name}의 ${dutyName(theirs)} 근무가 바뀌어 교대할 수 없습니다.`;
+  }
+  // 상대가 내 근무 날에 설 수 있는지: 출타 중이 아니고, 그날 다른 근무(맞바꾸는 근무 제외)가 없어야 한다
+  if (isAway(partner.id, mine.date)) return `${partner.name}은(는) ${dutyName(mine)} 날에 출타 중입니다.`;
+  const partnerOther = dutiesOf(partner.id, mine.date, mine.date).find((d) => !sameDuty(d, theirs));
+  if (partnerOther) return `${partner.name}은(는) ${dutyName(mine)} 날에 이미 ${partnerOther.post_name} ${partnerOther.label} 근무가 있습니다.`;
+  if (swap.kind === 'swap') {
+    // 나도 상대 근무 날에 설 수 있어야 한다
+    if (isAway(swap.requester_id, theirs.date)) return `${requesterName}은(는) ${dutyName(theirs)} 날에 출타 중입니다.`;
+    const mineOther = dutiesOf(swap.requester_id, theirs.date, theirs.date).find((d) => !sameDuty(d, mine));
+    if (mineOther) return `${requesterName}은(는) ${dutyName(theirs)} 날에 이미 ${mineOther.post_name} ${mineOther.label} 근무가 있습니다.`;
+  }
+  return null;
+}
+
+function swapView(s, viewerId) {
+  return {
+    ...s,
+    requester_name: nameOf(s.requester_id),
+    partner_name: nameOf(s.partner_id),
+    requester_duty: { ...s.requester_duty, ...dutyLabel(s.requester_duty) },
+    partner_duty: s.partner_duty ? { ...s.partner_duty, ...dutyLabel(s.partner_duty) } : null,
+    decided_by_name: s.decided_by ? nameOf(s.decided_by) : null,
+    role: s.requester_id === viewerId ? 'requester' : s.partner_id === viewerId ? 'partner' : null,
+  };
+}
+
+// 승인 대기 먼저, 그다음 최근 요청부터
+function swapOrder(a, b) {
+  return (
+    (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) ||
+    b.requested_at.localeCompare(a.requested_at) ||
+    b.id.localeCompare(a.id)
+  );
+}
+
+// 승인 대기 중인 교대에 걸린 근무인지 (같은 근무로 요청을 두 번 걸지 않게)
+function pendingSwapOn(d) {
+  return mockDb.duty_swaps.find(
+    (s) => s.status === 'pending' && (sameDuty(s.requester_duty, d) || sameDuty(s.partner_duty, d)),
+  );
+}
+
+// 병사만. 교대 상대로 고를 수 있는 병사 (나 빼고, 이름만)
+export function getSwapPartners() {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return [];
+  return mockDb.profiles
+    .filter((p) => p.is_active && p.role === 'soldier' && p.id !== user.id)
+    .map((p) => ({ id: p.id, name: p.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+}
+
+// 한 병사의 근무 (오늘부터 한 달). 맞바꿀 상대 근무를 고를 때 쓴다. 근무표처럼 병사도 본다.
+export function getSoldierDuties(userId, now = Date.now()) {
+  if (!getCurrentUser()) return [];
+  const win = getApplyWindow(now);
+  return dutiesOf(userId, win.start, win.end);
+}
+
+// 병사만. input: { kind, requester_duty: { post_id, date, slot }, partner_id, partner_duty(맞바꾸기만), reason }
+// 결과: { ok: true, swap } 또는 { ok: false, reason: 'forbidden' | 'invalid', errors }
+export function requestDutySwap(input, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user || user.role !== 'soldier') return { ok: false, reason: 'forbidden' };
+  const kind = input.kind;
+  const errors = {};
+  const reason = String(input.reason ?? '').trim();
+  if (!reason) errors.reason = '교대 사유를 입력하세요.';
+  else if (reason.length > MAX_SWAP_REASON_LENGTH) errors.reason = `사유는 ${MAX_SWAP_REASON_LENGTH}자 이하로 입력하세요.`;
+  const swap = {
+    kind,
+    requester_id: user.id,
+    requester_duty: cleanDuty(input.requester_duty),
+    partner_id: input.partner_id,
+    partner_duty: kind === 'swap' ? cleanDuty(input.partner_duty) : null,
+  };
+  if (!SWAP_KINDS.includes(kind)) {
+    errors.kind = '맞바꾸기인지 대신 서기인지 고르세요.';
+  } else if (!swap.requester_duty) {
+    errors.partner_id = '교대할 내 근무를 고르세요.';
+  } else {
+    const problem = checkSwap(swap, now);
+    if (problem) {
+      errors[problem === '맞바꿀 상대의 근무를 고르세요.' ? 'partner_duty' : 'partner_id'] = problem;
+    } else if (pendingSwapOn(swap.requester_duty) || (swap.partner_duty && pendingSwapOn(swap.partner_duty))) {
+      errors.partner_id = '이 근무로 이미 승인 대기 중인 교대 요청이 있습니다.';
+    }
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+  const row = {
+    id: nextId('w', mockDb.duty_swaps),
+    ...swap,
+    reason,
+    status: 'pending',
+    reject_reason: null,
+    decided_by: null,
+    requested_at: new Date(now).toISOString(),
+    decided_at: null,
+  };
+  mockDb.duty_swaps.push(row);
+  return { ok: true, swap: swapView(row, user.id) };
+}
+
+// 병사: 내가 요청했거나 상대인 교대. 간부: 모든 교대. (승인 대기 먼저)
+// 간부가 보는 승인 대기 건에는 지금 승인할 수 없으면 problem(이유)이 붙는다.
+export function getDutySwaps(now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return [];
+  const rows =
+    user.role === 'officer'
+      ? mockDb.duty_swaps
+      : mockDb.duty_swaps.filter((s) => s.requester_id === user.id || s.partner_id === user.id);
+  return [...rows].sort(swapOrder).map((s) => {
+    const view = swapView(s, user.id);
+    if (user.role === 'officer' && s.status === 'pending') view.problem = checkSwap(s, now);
+    return view;
+  });
+}
+
+// 근무 하나에 걸린 승인 대기 교대 (내 근무 달력에서 "교대 요청 중" 표시용)
+export function getPendingSwapFor(d) {
+  const user = getCurrentUser();
+  if (!user) return null;
+  const s = pendingSwapOn(cleanDuty(d));
+  return s ? swapView(s, user.id) : null;
+}
+
+// 요청한 병사만, 승인 대기일 때만
+export function cancelDutySwap(id, now = Date.now()) {
+  const user = getCurrentUser();
+  if (!user) return { ok: false, reason: 'forbidden' };
+  const s = mockDb.duty_swaps.find((x) => x.id === id);
+  if (!s) return { ok: false, reason: 'not_found' };
+  if (s.requester_id !== user.id) return { ok: false, reason: 'forbidden' };
+  if (s.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  s.status = 'cancelled';
+  s.decided_at = new Date(now).toISOString();
+  return { ok: true };
+}
+
+// 간부만. decision: 'approve' | 'reject'(rejectReason 필수)
+// 결과: { ok: true } 또는 { ok: false, reason: 'forbidden' | 'not_found' | 'already_decided' | 'invalid' | 'stale', message, errors }
+export function decideDutySwap(id, decision, rejectReason = '', now = Date.now()) {
+  const officer = requireOfficer();
+  if (!officer) return { ok: false, reason: 'forbidden' };
+  if (decision !== 'approve' && decision !== 'reject') return { ok: false, reason: 'invalid' };
+  const s = mockDb.duty_swaps.find((x) => x.id === id);
+  if (!s) return { ok: false, reason: 'not_found' };
+  if (s.status !== 'pending') return { ok: false, reason: 'already_decided' };
+  if (decision === 'reject') {
+    const text = String(rejectReason ?? '').trim();
+    if (!text) return { ok: false, reason: 'invalid', errors: { reject_reason: '반려 사유를 입력하세요.' } };
+    if (text.length > MAX_SWAP_REASON_LENGTH) {
+      return { ok: false, reason: 'invalid', errors: { reject_reason: `사유는 ${MAX_SWAP_REASON_LENGTH}자 이하로 입력하세요.` } };
+    }
+    s.status = 'rejected';
+    s.reject_reason = text;
+  } else {
+    const problem = checkSwap(s, now);
+    if (problem) return { ok: false, reason: 'stale', message: problem };
+    const put = (d, userId) => {
+      mockDb.duty_overrides = mockDb.duty_overrides.filter((o) => !sameDuty(o, d));
+      mockDb.duty_overrides.push({
+        post_id: d.post_id,
+        date: d.date,
+        slot: d.slot,
+        user_id: userId,
+        source: 'swap',
+        changed_by: officer.id,
+        changed_at: new Date(now).toISOString(),
+      });
+    };
+    put(s.requester_duty, s.partner_id);
+    if (s.kind === 'swap') put(s.partner_duty, s.requester_id);
+    s.status = 'approved';
+  }
+  s.decided_by = officer.id;
+  s.decided_at = new Date(now).toISOString();
+  writeAuditLog(officer, decision === 'approve' ? 'approve_duty_swap' : 'reject_duty_swap', 'duty_swaps', s.id, now);
+  return { ok: true };
+}

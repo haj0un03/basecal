@@ -1,6 +1,6 @@
 // 신청 탭 근무 영역 (Phase 3.5, prd.md "추가. 근무 순번 편성")
-// - 병사("근무 교대" 탭): 내 근무 달력(오늘부터 한 달), 날짜별 근무표
-// - 간부: 날짜별 근무표와 근무자 손 수정(3.5-2), 근무지·시간대·순번 명단 만들기·고치기·없애기
+// - 병사("근무 교대" 탭): 내 근무 달력(오늘부터 한 달)과 교대 요청, 교대 요청 내역, 날짜별 근무표
+// - 간부: 교대 요청 승인·반려(3.5-3), 날짜별 근무표와 근무자 손 수정(3.5-2), 근무지·시간대·순번 명단 만들기·고치기·없애기
 // 근무자는 순번으로 계산되어 각자의 달력에 "근무"로 자동 표시된다.
 import {
   getApplyWindow,
@@ -13,6 +13,13 @@ import {
   getDutyCandidates,
   setDutyOverride,
   clearDutyOverride,
+  getSwapPartners,
+  getSoldierDuties,
+  requestDutySwap,
+  getDutySwaps,
+  getPendingSwapFor,
+  cancelDutySwap,
+  decideDutySwap,
   NETWORK_ERROR,
 } from './data.js';
 
@@ -64,7 +71,8 @@ function subHead(title, ...actions) {
 export function renderDutySection(section, user, focusSelector) {
   const redraw = (selector) => renderDutySection(section, user, selector);
   const parts = [el('h2', '', user.role === 'soldier' ? '근무 교대' : '근무')];
-  if (user.role === 'soldier') parts.push(...myDutyParts(redraw, user));
+  if (user.role === 'soldier') parts.push(...myDutyParts(redraw, user), ...swapParts(redraw, user));
+  if (user.role === 'officer') parts.push(...swapParts(redraw, user));
   parts.push(...boardParts(redraw, user));
   if (user.role === 'officer') parts.push(...postParts(redraw));
   section.replaceChildren(...parts);
@@ -162,18 +170,30 @@ function myDutyParts(redraw, user) {
   }
   box.append(grid);
 
-  // 고른 날의 근무 내용
+  // 고른 날의 근무 내용과 교대 요청 버튼
   const sel = calState.selected;
-  const detail = el('p', 'duty-cal-detail');
+  const detail = el('div', 'duty-cal-detail');
   detail.setAttribute('aria-live', 'polite');
+  const list = sel ? byDate.get(sel) ?? [] : [];
   if (!sel) {
-    detail.textContent = duties.length ? `이 기간 근무 ${duties.length}번. 날짜를 누르면 내용을 봅니다.` : '이 기간에 근무가 없습니다.';
-  } else {
-    const list = byDate.get(sel) ?? [];
-    detail.textContent = list.length
-      ? `${shortDay(sel)} ${list.map((d) => `${d.post_name} ${d.label}${SOURCE_LABELS[d.source] ? ` (${SOURCE_LABELS[d.source]})` : ''}`).join(', ')}`
-      : `${shortDay(sel)} 근무 없음`;
+    detail.textContent = duties.length ? `이 기간 근무 ${duties.length}번. 날짜를 누르면 내용을 보고 교대를 요청할 수 있습니다.` : '이 기간에 근무가 없습니다.';
+  } else if (list.length === 0) {
+    detail.textContent = `${shortDay(sel)} 근무 없음`;
   }
+  list.forEach((d) => {
+    const line = el('div', 'duty-cal-line');
+    line.append(el('span', '', `${shortDay(d.date)} ${d.post_name} ${d.label}${SOURCE_LABELS[d.source] ? ` (${SOURCE_LABELS[d.source]})` : ''}`));
+    const pending = getPendingSwapFor(d);
+    if (pending) {
+      line.append(el('span', 'status-badge status-pending', '교대 요청 중'));
+    } else {
+      const ask = button('small-button', '교대 요청', null, () => openSwapDialog(redraw, d));
+      ask.dataset.swapFor = `${d.post_id}:${d.date}:${d.slot}`;
+      ask.setAttribute('aria-label', `${shortDay(d.date)} ${d.post_name} ${d.label} 교대 요청`);
+      line.append(ask);
+    }
+    detail.append(line);
+  });
   box.append(detail);
   parts.push(box);
   return parts;
@@ -494,4 +514,256 @@ function openOverrideDialog(redraw, date, post, slot) {
   form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
   dutyDialog.showModal();
   select.focus();
+}
+
+// ── 근무 교대 (3.5-3) ──────────────────────────────────────
+// 병사끼리 먼저 이야기한 뒤 한 명이 요청(사유 필수) → 간부가 승인·반려(반려 사유 필수).
+// 맞바꾸기: 내 근무 ↔ 상대 근무. 대신 서기: 상대가 내 근무를 대신 선다.
+
+const SWAP_STATUS = {
+  pending: ['status-pending', '승인 대기'],
+  approved: ['status-approved', '승인'],
+  rejected: ['status-rejected', '반려'],
+  cancelled: ['status-cancelled', '취소'],
+};
+
+function dayOf(d) {
+  return `${Number(d.date.slice(5, 7))}/${Number(d.date.slice(8))}`;
+}
+
+function swapTitle(w) {
+  const a = w.requester_duty;
+  if (w.kind === 'cover') return `${dayOf(a)} ${a.post_name} ${a.label}: ${w.requester_name} → ${w.partner_name} 대신 서기`;
+  const b = w.partner_duty;
+  return `${w.requester_name} ${dayOf(a)} ${a.post_name} ${a.label} ↔ ${w.partner_name} ${dayOf(b)} ${b.post_name} ${b.label}`;
+}
+
+function swapItem(redraw, w, user) {
+  const item = el('li', `grant-item swap-item status-${w.status}`);
+  item.dataset.swapId = w.id;
+  const [cls, text] = SWAP_STATUS[w.status];
+  item.append(el('span', `status-badge ${cls}`, text), el('span', 'grant-title', swapTitle(w)));
+  const requested = new Date(w.requested_at);
+  const meta = [w.kind === 'cover' ? '대신 서기' : '맞바꾸기', `사유: ${w.reason}`, `${requested.getMonth() + 1}/${requested.getDate()} 요청`];
+  if (w.role === 'partner') meta.unshift('나에게 온 요청');
+  item.append(el('span', 'grant-meta', meta.join(' · ')));
+  if (w.status === 'rejected') item.append(el('span', 'grant-meta swap-reject', `반려 사유: ${w.reject_reason}`));
+  const actions = el('span', 'grant-actions');
+  if (user.role === 'soldier' && w.role === 'requester' && w.status === 'pending') {
+    actions.append(
+      button('small-button danger', '요청 취소', null, async () => {
+        if (!window.confirm('이 교대 요청을 취소할까요?')) return;
+        const result = await cancelDutySwap(w.id);
+        if (result.reason === 'network') window.alert(NETWORK_ERROR);
+        redraw('.swap-head h3');
+      }),
+    );
+  }
+  if (user.role === 'officer' && w.status === 'pending') {
+    if (w.problem) item.append(el('span', 'grant-meta swap-problem', `지금은 승인할 수 없음: ${w.problem}`));
+    const approve = button('small-button approve', '승인', null, async () => {
+      const result = await decideDutySwap(w.id, 'approve');
+      if (!result.ok) window.alert(result.reason === 'stale' ? result.message : result.reason === 'network' ? NETWORK_ERROR : '승인할 수 없습니다.');
+      redraw('.swap-head h3');
+    });
+    approve.disabled = Boolean(w.problem);
+    actions.append(approve, button('small-button danger', '반려', null, () => openRejectDialog(redraw, w)));
+  }
+  if (actions.childElementCount) item.append(actions);
+  return item;
+}
+
+function swapParts(redraw, user) {
+  const swaps = getDutySwaps();
+  const head = el('div', 'leave-sub-head swap-head');
+  head.append(el('h3', '', user.role === 'officer' ? '교대 요청' : '교대 요청 내역'));
+  head.querySelector('h3').tabIndex = -1;
+  const parts = [head];
+  if (user.role === 'soldier') {
+    parts.push(el('p', 'help', '교대할 병사와 먼저 이야기한 뒤, 위 달력에서 내 근무 날을 눌러 요청하세요. 간부가 승인하면 근무가 바뀝니다. 상대에게도 이 요청이 보입니다.'));
+  }
+  const pending = swaps.filter((w) => w.status === 'pending');
+  const done = swaps.filter((w) => w.status !== 'pending');
+  if (user.role === 'officer') {
+    if (pending.length === 0) parts.push(el('p', 'cal-empty', '승인 대기 중인 교대 요청이 없습니다.'));
+    else {
+      const list = el('ul', 'grant-list swap-list swap-pending');
+      pending.forEach((w) => list.append(swapItem(redraw, w, user)));
+      parts.push(list);
+    }
+    parts.push(subHead('교대 내역'));
+    if (done.length === 0) parts.push(el('p', 'cal-empty', '처리한 교대가 없습니다.'));
+    else {
+      const list = el('ul', 'grant-list swap-list swap-done');
+      done.forEach((w) => list.append(swapItem(redraw, w, user)));
+      parts.push(list);
+    }
+    return parts;
+  }
+  if (swaps.length === 0) {
+    parts.push(el('p', 'cal-empty', '교대 요청이 없습니다.'));
+    return parts;
+  }
+  const list = el('ul', 'grant-list swap-list');
+  swaps.forEach((w) => list.append(swapItem(redraw, w, user)));
+  parts.push(list);
+  return parts;
+}
+
+// 병사: 교대 요청 창 (내 근무 하나를 정해서 연다)
+function openSwapDialog(redraw, duty) {
+  const partners = getSwapPartners();
+  dutyDialog.innerHTML = `
+    <form class="dialog-body" novalidate>
+      <h2 id="duty-dialog-title">근무 교대 요청</h2>
+      <p class="help swap-target"></p>
+      <fieldset class="field">
+        <legend class="field-label">교대 방법</legend>
+        <div class="choice-row">
+          <label class="choice"><input type="radio" name="kind" value="swap" checked> 맞바꾸기</label>
+          <label class="choice"><input type="radio" name="kind" value="cover"> 대신 서기</label>
+        </div>
+        <span class="help swap-kind-help"></span>
+        <span class="field-error" data-error-for="kind" hidden></span>
+      </fieldset>
+      <label class="field">
+        <span class="field-label">교대할 병사</span>
+        <select name="partner_id"><option value="">고르세요</option></select>
+        <span class="field-error" data-error-for="partner_id" hidden></span>
+      </label>
+      <label class="field swap-partner-duty">
+        <span class="field-label">맞바꿀 상대 근무</span>
+        <select name="partner_duty"></select>
+        <span class="field-error" data-error-for="partner_duty" hidden></span>
+      </label>
+      <label class="field">
+        <span class="field-label">사유 (간부에게 보임)</span>
+        <input name="reason" maxlength="100" placeholder="예: 11/8 가족 면회">
+        <span class="field-error" data-error-for="reason" hidden></span>
+      </label>
+      <p class="help">상대와 먼저 이야기했는지 확인하세요. 상대의 근무 교대 탭에도 이 요청이 보이고, 간부가 승인하면 근무가 바뀝니다.</p>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">간부에게 요청하기</button>
+      <button type="button" class="secondary-button" data-action="close">취소</button>
+    </form>
+  `;
+  const form = dutyDialog.querySelector('form');
+  const f = form.elements;
+  form.querySelector('.swap-target').textContent = `내 근무: ${shortDay(duty.date)} ${duty.post_name} ${duty.label}`;
+  f.partner_id.append(
+    ...partners.map((x) => {
+      const option = el('option', '', x.name);
+      option.value = x.id;
+      return option;
+    }),
+  );
+  const dutyBox = form.querySelector('.swap-partner-duty');
+  const kindHelp = form.querySelector('.swap-kind-help');
+  const update = () => {
+    const kind = f.kind.value;
+    kindHelp.textContent =
+      kind === 'swap' ? '내 근무와 상대 근무를 서로 바꿔 섭니다.' : '상대가 내 근무를 대신 섭니다. 내가 대신 서 줄 근무는 정하지 않습니다.';
+    dutyBox.hidden = kind !== 'swap';
+    const theirs = f.partner_id.value ? getSoldierDuties(f.partner_id.value) : [];
+    f.partner_duty.replaceChildren(
+      ...(f.partner_id.value
+        ? theirs.length
+          ? theirs.map((d) => {
+              const option = el('option', '', `${shortDay(d.date)} ${d.post_name} ${d.label}`);
+              option.value = `${d.post_id}|${d.date}|${d.slot}`;
+              return option;
+            })
+          : [el('option', '', '이 병사는 한 달 안에 근무가 없습니다')]
+        : [el('option', '', '먼저 병사를 고르세요')]),
+    );
+    if (!f.partner_id.value || theirs.length === 0) f.partner_duty.firstChild.value = '';
+  };
+  form.addEventListener('change', (e) => {
+    if (e.target.name === 'kind' || e.target.name === 'partner_id') update();
+  });
+  update();
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    form.querySelectorAll('.field-error, .form-error').forEach((node) => {
+      node.hidden = true;
+    });
+    const [post_id, date, slot] = (f.partner_duty.value || '||').split('|');
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    const result = await requestDutySwap({
+      kind: f.kind.value,
+      requester_duty: { post_id: duty.post_id, date: duty.date, slot: duty.slot },
+      partner_id: f.partner_id.value,
+      partner_duty: post_id ? { post_id, date, slot: Number(slot) } : null,
+      reason: f.reason.value,
+    });
+    submit.disabled = false;
+    if (result.ok) {
+      dutyDialog.close();
+      redraw('.swap-head h3');
+      return;
+    }
+    if (result.reason === 'invalid') {
+      Object.entries(result.errors).forEach(([name, message]) => {
+        const node = form.querySelector(`[data-error-for="${name}"]`);
+        node.textContent = message;
+        node.hidden = false;
+      });
+      const first = Object.keys(result.errors)[0];
+      (first === 'kind' ? f.kind[0] : f[first])?.focus?.();
+      return;
+    }
+    const error = form.querySelector('.form-error');
+    error.textContent = result.reason === 'network' ? NETWORK_ERROR : '병사만 교대를 요청할 수 있습니다.';
+    error.hidden = false;
+  });
+  form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
+  dutyDialog.showModal();
+  f.kind[0].focus();
+}
+
+// 간부: 반려 사유 창
+function openRejectDialog(redraw, w) {
+  dutyDialog.innerHTML = `
+    <form class="dialog-body" novalidate>
+      <h2 id="duty-dialog-title">교대 요청 반려</h2>
+      <p class="help swap-target"></p>
+      <label class="field">
+        <span class="field-label">반려 사유 (요청한 병사에게 보임)</span>
+        <input name="reject_reason" maxlength="100" placeholder="예: 그날 위병소 인원 조정 필요">
+        <span class="field-error" data-error-for="reject_reason" hidden></span>
+      </label>
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary-button">반려하기</button>
+      <button type="button" class="secondary-button" data-action="close">취소</button>
+    </form>
+  `;
+  const form = dutyDialog.querySelector('form');
+  form.querySelector('.swap-target').textContent = swapTitle(w);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    form.querySelectorAll('.field-error, .form-error').forEach((node) => {
+      node.hidden = true;
+    });
+    const result = await decideDutySwap(w.id, 'reject', form.elements.reject_reason.value);
+    if (result.ok) {
+      dutyDialog.close();
+      redraw('.swap-head h3');
+      return;
+    }
+    if (result.reason === 'invalid' && result.errors) {
+      const node = form.querySelector('[data-error-for="reject_reason"]');
+      node.textContent = result.errors.reject_reason;
+      node.hidden = false;
+      form.elements.reject_reason.focus();
+      return;
+    }
+    const error = form.querySelector('.form-error');
+    error.textContent = result.reason === 'network' ? NETWORK_ERROR : result.reason === 'already_decided' ? '이미 처리된 요청입니다.' : '반려할 수 없습니다.';
+    error.hidden = false;
+  });
+  form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
+  dutyDialog.showModal();
+  form.elements.reject_reason.focus();
 }

@@ -845,6 +845,7 @@ body {
 .status-badge.status-pending { color: #b26a00; }
 .status-badge.status-approved { color: var(--accent); }
 .status-badge.status-rejected { color: #a12222; }
+.status-badge.status-cancelled { color: var(--text-muted); }
 
 /* 휴가 신청 달력 ("휴가 계산기") */
 .apply-box {
@@ -1747,6 +1748,30 @@ fieldset.field {
 .duty-cal-detail {
   margin: 8px 0 0;
   font-size: 0.9rem;
+}
+
+/* 고른 날의 내 근무 한 줄: 근무 내용 + 교대 요청 버튼 */
+.duty-cal-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  padding: 4px 0;
+}
+
+.duty-cal-line + .duty-cal-line {
+  border-top: 1px solid var(--border);
+}
+
+/* 교대 요청: 반려 사유, 승인할 수 없는 이유 */
+.swap-reject {
+  color: #a12222;
+}
+
+.swap-problem {
+  color: #a12222;
+  font-weight: 600;
 }
 
 /* 간부의 "바꾸기" 버튼은 줄 오른쪽 끝에 */
