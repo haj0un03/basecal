@@ -1645,7 +1645,9 @@ export function getDutyCandidates(postId, iso, slot, now = Date.now()) {
       const other = otherDutyOn(s.id, iso, postId, slot);
       if (other) blocked = `${other} 근무`;
     }
-    return { id: s.id, name: s.name, position: s.position, current: s.id === target.current.user_id, blocked };
+    // 막지는 않지만, 넣으면 이틀 연속 근무가 되는 병사는 알려 준다
+    const consecutive = !blocked && s.id !== target.current.user_id && hasNeighborDuty(s.id, iso, null);
+    return { id: s.id, name: s.name, position: s.position, current: s.id === target.current.user_id, blocked, consecutive };
   });
 }
 
@@ -1877,7 +1879,13 @@ export function getDutySwaps(now = Date.now()) {
       : mockDb.duty_swaps.filter((s) => s.requester_id === user.id || s.partner_id === user.id);
   return [...rows].sort(swapOrder).map((s) => {
     const view = swapView(s, user.id);
-    if (user.role === 'officer' && s.status === 'pending') view.problem = checkSwap(s, now);
+    if (user.role === 'officer' && s.status === 'pending') {
+      view.problem = checkSwap(s, now);
+      // 승인하면 이틀 연속 근무가 되는 사람 (막지 않고 알려만 준다)
+      view.consecutive = [];
+      if (s.kind === 'swap' && hasNeighborDuty(s.requester_id, s.partner_duty.date, s.requester_duty)) view.consecutive.push(nameOf(s.requester_id));
+      if (hasNeighborDuty(s.partner_id, s.requester_duty.date, s.partner_duty)) view.consecutive.push(nameOf(s.partner_id));
+    }
     return view;
   });
 }
@@ -2347,4 +2355,53 @@ export function deleteFacilityBlock(id, now = Date.now()) {
 // 승인된 내 예약 (달력 탭에 "시설"로 보인다)
 function approvedReservationsOf(userId, start, end) {
   return mockDb.reservations.filter((r) => r.user_id === userId && r.status === 'approved' && r.date >= start && r.date <= end);
+}
+
+// ── 연속 근무 주의 (2026-11-07 사용자 요청) ─────────────────
+// 이틀 연달아 근무를 서는 병사를 찾는다. 막지는 않고 간부에게 "연속 근무 주의"로 알려 준다.
+// 순번대로만 돌면 잘 생기지 않고, 대신 서기·손 수정·교대로 생긴다.
+
+function prevDay(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return localISO(new Date(y, m - 1, d - 1));
+}
+
+// 그날 근무를 서면 전날이나 다음 날에도 근무가 있는지 (exclude: 내놓는 근무, 없으면 null)
+function hasNeighborDuty(userId, iso, exclude) {
+  return dutiesOf(userId, prevDay(iso), nextDay(iso)).some((d) => d.date !== iso && !sameDuty(d, exclude));
+}
+
+// 간부만. 오늘부터 한 달 동안 이틀 이상 연속으로 근무하는 병사 (어제 근무 + 오늘 근무도 센다)
+// 결과: [{ user_id, name, start, end, days }] 시작일 순
+export function getConsecutiveDuties(now = Date.now()) {
+  if (!requireOfficer()) return [];
+  const win = getApplyWindow(now);
+  const from = prevDay(win.start);
+  const byUser = new Map();
+  const posts = activePosts();
+  for (let iso = from; iso <= win.end; iso = nextDay(iso)) {
+    posts.forEach((post) => {
+      postDay(post, iso).forEach((x) => {
+        if (!x.user_id) return;
+        if (!byUser.has(x.user_id)) byUser.set(x.user_id, new Set());
+        byUser.get(x.user_id).add(iso);
+      });
+    });
+  }
+  const result = [];
+  byUser.forEach((dates, userId) => {
+    const sorted = [...dates].sort();
+    let runStart = null;
+    sorted.forEach((iso, i) => {
+      if (runStart === null) runStart = iso;
+      const next = sorted[i + 1];
+      if (next !== nextDay(iso)) {
+        if (runStart !== iso && iso >= win.start) {
+          result.push({ user_id: userId, name: nameOf(userId), start: runStart, end: iso, days: daysFrom(runStart, iso) + 1 });
+        }
+        runStart = null;
+      }
+    });
+  });
+  return result.sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name, 'ko'));
 }

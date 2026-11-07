@@ -11,6 +11,7 @@ import {
   deleteDutyPost,
   getSoldiers,
   getDutyCandidates,
+  getConsecutiveDuties,
   setDutyOverride,
   clearDutyOverride,
   getSwapChoices,
@@ -73,6 +74,7 @@ export function renderDutySection(section, user, focusSelector) {
   const parts = [el('h2', '', user.role === 'soldier' ? '근무 교대' : '근무')];
   if (user.role === 'soldier') parts.push(...myDutyParts(redraw, user), ...swapParts(redraw, user));
   if (user.role === 'officer') parts.push(...swapParts(redraw, user));
+  if (user.role === 'officer') parts.push(...consecutiveParts(redraw));
   parts.push(...boardParts(redraw, user));
   if (user.role === 'officer') parts.push(...postParts(redraw));
   section.replaceChildren(...parts);
@@ -481,7 +483,7 @@ function openOverrideDialog(redraw, date, post, slot) {
     `${shortDay(date)} ${post.post_name} ${slot.label} · 지금: ${slot.name ?? '근무자 없음'}${SOURCE_LABELS[slot.source] ? ` (${SOURCE_LABELS[slot.source]})` : ''}`;
   select.append(
     ...candidates.map((c) => {
-      const note = c.current ? ' — 지금 근무자' : c.blocked ? ` — ${c.blocked}` : '';
+      const note = c.current ? ' — 지금 근무자' : c.blocked ? ` — ${c.blocked}` : c.consecutive ? ' — 연속 근무 주의' : '';
       const option = el('option', '', `${c.name} · ${c.position}${note}`);
       option.value = c.id;
       option.disabled = c.current || Boolean(c.blocked);
@@ -573,6 +575,7 @@ function swapItem(redraw, w, user) {
   }
   if (user.role === 'officer' && w.status === 'pending') {
     if (w.problem) item.append(el('span', 'grant-meta swap-problem', `지금은 승인할 수 없음: ${w.problem}`));
+    else if (w.consecutive?.length) item.append(el('span', 'grant-meta duty-consecutive-note', `연속 근무 주의: 승인하면 이틀 연속 근무가 됩니다 (${w.consecutive.join(', ')})`));
     const approve = button('small-button approve', '승인', null, async () => {
       const result = await decideDutySwap(w.id, 'approve');
       if (!result.ok) window.alert(result.reason === 'stale' ? result.message : result.reason === 'network' ? NETWORK_ERROR : '승인할 수 없습니다.');
@@ -848,4 +851,31 @@ function openRejectDialog(redraw, w) {
   form.querySelector('[data-action="close"]').addEventListener('click', () => dutyDialog.close());
   dutyDialog.showModal();
   form.elements.reject_reason.focus();
+}
+
+// ── 간부: 연속 근무 주의 ─────────────────────────────────────
+// 오늘부터 한 달 동안 이틀 이상 연달아 근무하는 병사. 막지 않고 알려만 준다. 누르면 근무표가 그날로 간다.
+
+function consecutiveParts(redraw) {
+  const list = getConsecutiveDuties();
+  const parts = [subHead('연속 근무 주의')];
+  if (list.length === 0) {
+    parts.push(el('p', 'cal-empty', '앞으로 한 달 동안 이틀 연속 근무하는 병사가 없습니다.'));
+    return parts;
+  }
+  parts.push(el('p', 'help', '이틀 이상 연달아 근무하는 병사입니다. 누르면 아래 근무표가 그날로 바뀝니다. 필요하면 "바꾸기"로 근무자를 바꾸세요.'));
+  const ul = el('ul', 'duty-consecutive-list');
+  list.forEach((x) => {
+    const li = el('li');
+    const go = button('duty-consecutive-item', '', null, () => {
+      boardState.date = x.start;
+      redraw(`[data-consecutive="${x.user_id}:${x.start}"]`);
+    });
+    go.dataset.consecutive = `${x.user_id}:${x.start}`;
+    go.append(el('span', 'status-badge status-pending', '연속 근무 주의'), el('span', 'grant-title', `${x.name} ${shortDay(x.start)}~${shortDay(x.end)} (${x.days}일 연속)`));
+    li.append(go);
+    ul.append(li);
+  });
+  parts.push(ul);
+  return parts;
 }

@@ -1774,6 +1774,35 @@ fieldset.field {
   font-weight: 600;
 }
 
+/* 간부: 연속 근무 주의 목록 (누르면 근무표가 그날로) */
+.duty-consecutive-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.duty-consecutive-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--type-duty) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--type-duty) 8%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.duty-consecutive-note {
+  color: var(--type-duty);
+  font-weight: 600;
+}
+
 /* 간부의 "바꾸기" 버튼은 줄 오른쪽 끝에 */
 .duty-slot > .small-button {
   margin-left: auto;
